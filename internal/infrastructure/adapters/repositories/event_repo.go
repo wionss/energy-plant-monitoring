@@ -44,9 +44,11 @@ func (r *EventRepository) Create(entity *entities.EventEntity) (*entities.EventE
 // FindAll obtiene todos los eventos ordenados por fecha de creación (más recientes primero)
 // CAMBIO: Método nuevo
 // RAZÓN: Permite a la API REST devolver todos los eventos para consulta
+// CAMBIO: Agregado Preload para cargar la relación con EnergyPlants
+// RAZÓN: Permite mostrar los nombres de las plantas en las consultas de Swagger
 func (r *EventRepository) FindAll() ([]*entities.EventEntity, error) {
 	var entities []*entities.EventEntity
-	if err := r.db.Order("created_at DESC").Find(&entities).Error; err != nil {
+	if err := r.db.Preload("PlantSource").Order("created_at DESC").Find(&entities).Error; err != nil {
 		return nil, err
 	}
 	return entities, nil
@@ -57,9 +59,11 @@ func (r *EventRepository) FindAll() ([]*entities.EventEntity, error) {
 // RAZÓN: Permite a la API REST obtener un evento individual
 // CAMBIO: Ahora traduce gorm.ErrRecordNotFound a domainerrors.ErrNotFound
 // RAZÓN: Permite a los handlers distinguir entre 404 (not found) y 500 (internal error)
+// CAMBIO: Agregado Preload para cargar la relación con EnergyPlants
+// RAZÓN: Permite mostrar los nombres de las plantas en las consultas de Swagger
 func (r *EventRepository) FindByID(id uuid.UUID) (*entities.EventEntity, error) {
 	var entity entities.EventEntity
-	if err := r.db.First(&entity, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("PlantSource").First(&entity, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domainerrors.ErrNotFound
 		}
@@ -71,9 +75,11 @@ func (r *EventRepository) FindByID(id uuid.UUID) (*entities.EventEntity, error) 
 // FindByEventType filtra eventos por tipo (power_reading, alert, etc.)
 // CAMBIO: Método nuevo
 // RAZÓN: Permite filtrar eventos por tipo para análisis específicos
+// CAMBIO: Agregado Preload para cargar la relación con EnergyPlants
+// RAZÓN: Permite mostrar los nombres de las plantas en las consultas de Swagger
 func (r *EventRepository) FindByEventType(eventType string) ([]*entities.EventEntity, error) {
 	var entities []*entities.EventEntity
-	if err := r.db.Where("event_type = ?", eventType).Order("created_at DESC").Find(&entities).Error; err != nil {
+	if err := r.db.Preload("PlantSource").Where("event_type = ?", eventType).Order("created_at DESC").Find(&entities).Error; err != nil {
 		return nil, err
 	}
 	return entities, nil

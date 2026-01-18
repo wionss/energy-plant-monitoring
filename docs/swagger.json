@@ -23,7 +23,10 @@
     "paths": {
         "/api/v1/events": {
             "get": {
-                "description": "Get all events from the database ordered by creation time with pagination support",
+                "description": "Get all events from the database ordered by creation time",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -31,27 +34,14 @@
                     "events"
                 ],
                 "summary": "List all events",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "default": 100,
-                        "description": "Maximum number of events to return (max 1000)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "default": 0,
-                        "description": "Number of events to skip",
-                        "name": "offset",
-                        "in": "query"
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/rest.PaginatedEventsResponse"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/entities.EventEntity"
+                            }
                         }
                     },
                     "500": {
@@ -65,7 +55,10 @@
         },
         "/api/v1/events/type/{type}": {
             "get": {
-                "description": "Get all events filtered by event type with pagination support",
+                "description": "Get all events filtered by event type",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -80,27 +73,16 @@
                         "name": "type",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "default": 100,
-                        "description": "Maximum number of events to return (max 1000)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "default": 0,
-                        "description": "Number of events to skip",
-                        "name": "offset",
-                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/rest.PaginatedEventsResponse"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/entities.EventEntity"
+                            }
                         }
                     },
                     "500": {
@@ -115,6 +97,9 @@
         "/api/v1/events/{id}": {
             "get": {
                 "description": "Get a single event by its UUID",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -148,6 +133,52 @@
                         "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/rest.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/test/intake": {
+            "post": {
+                "description": "Simulates a Kafka message to test validation and Telegram notifications",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "test"
+                ],
+                "summary": "Test intake message processing",
+                "parameters": [
+                    {
+                        "description": "Test intake data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/rest.TestIntakeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "All validations passed",
+                        "schema": {
+                            "$ref": "#/definitions/rest.TestIntakeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed (invalid UUID or missing field)",
+                        "schema": {
+                            "$ref": "#/definitions/rest.TestIntakeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Plant does not exist in database",
+                        "schema": {
+                            "$ref": "#/definitions/rest.TestIntakeResponse"
                         }
                     }
                 }
@@ -474,30 +505,41 @@
                 }
             }
         },
-        "rest.PaginatedEventsResponse": {
+        "rest.TestIntakeRequest": {
             "type": "object",
             "properties": {
-                "items": {
-                    "type": "array",
-                    "maxItems": 1000,
-                    "items": {
-                        "$ref": "#/definitions/entities.EventEntity"
-                    }
+                "event_type": {
+                    "type": "string",
+                    "example": "power_reading"
                 },
-                "total": {
-                    "type": "integer",
-                    "description": "Total number of events matching the query",
-                    "example": 500
+                "plant_name": {
+                    "type": "string",
+                    "example": "planta_solar_1"
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Number of items requested per page",
-                    "example": 100
+                "plant_source_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "rest.TestIntakeResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean",
+                    "example": false
                 },
-                "offset": {
-                    "type": "integer",
-                    "description": "Number of items skipped",
-                    "example": 0
+                "message": {
+                    "type": "string",
+                    "example": "Validation failed: invalid UUID format"
+                },
+                "telegram_sent": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "error": {
+                    "type": "string",
+                    "example": "invalid plant_source_id format"
                 }
             }
         },

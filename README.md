@@ -184,6 +184,57 @@ Swagger UI is automatically available in development mode:
 
 Swagger docs are regenerated automatically when running `make dev`, `make dev-modd`, or `make run`.
 
+## Telegram Notifications
+
+The service can send error notifications to a Telegram bot when validation errors occur during event processing.
+
+### Configuration
+
+1. **Create a Telegram Bot:**
+   - Open Telegram and search for [@BotFather](https://t.me/botfather)
+   - Send `/newbot` and follow the instructions
+   - Copy the bot token provided
+
+2. **Get your Chat ID:**
+   - Send a message to your bot
+   - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+   - Look for the `chat.id` field in the response
+
+3. **Configure Environment Variables:**
+   ```bash
+   TELEGRAM_ENABLED=true
+   TELEGRAM_BOT_TOKEN=your_bot_token_here
+   TELEGRAM_CHAT_ID=your_chat_id_here
+   ```
+
+### Error Types Notified
+
+The system sends Telegram notifications for the following validation errors:
+
+- **Invalid UUID Format:** When `plant_source_id` cannot be parsed as a valid UUID
+- **Missing Required Fields:** When `plant_source_id` is not present in the event message
+- **Non-existent Plant:** When an event references a `plant_source_id` that doesn't exist in the database
+
+Each notification includes:
+- Timestamp
+- Error type
+- Error message
+- Context (field name, invalid value, event type, plant name)
+- Service name
+
+### Example Notification
+
+```
+🚨 Error de Validación
+
+⏰ Hora: 2026-01-11 15:30:45
+🔴 Tipo: UUID Inválido
+📝 Mensaje: Error al parsear UUID: invalid UUID format
+📋 Contexto: Campo: plant_source_id, UUID inválido: abc-123-invalid
+
+🏢 Servicio: Monitoring Energy Service
+```
+
 ## Environment Variables
 
 ```bash
@@ -208,6 +259,11 @@ PRODUCER_TOPIC=events.output
 # Webhook
 WEBHOOK_ENABLED=false
 WEBHOOK_URL=
+
+# Telegram Notifications
+TELEGRAM_ENABLED=false
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
 
 # HTTP
 HTTP_CLIENT_TIMEOUT=30

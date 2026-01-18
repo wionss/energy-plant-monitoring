@@ -10,6 +10,7 @@ import (
 	"monitoring-energy-service/internal/domain/entities"
 	"monitoring-energy-service/internal/domain/ports/input"
 	"monitoring-energy-service/internal/domain/ports/output"
+	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 
 	"github.com/google/uuid"
 )
@@ -25,6 +26,7 @@ import (
 type IntakeHandler struct {
 	eventRepository      output.EventRepositoryInterface      // Para guardar eventos en DB
 	energyPlantRepository output.EnergyPlantRepositoryInterface // Para validar que las plantas existen
+	telegramNotifier     *telegram.Notifier                    // Para notificar errores de validación
 }
 
 var _ input.MessageHandler = &IntakeHandler{}
@@ -35,10 +37,12 @@ var _ input.MessageHandler = &IntakeHandler{}
 func NewIntakeHandler(
 	eventRepository output.EventRepositoryInterface,
 	energyPlantRepository output.EnergyPlantRepositoryInterface,
+	telegramNotifier *telegram.Notifier,
 ) *IntakeHandler {
 	return &IntakeHandler{
 		eventRepository:       eventRepository,
 		energyPlantRepository: energyPlantRepository,
+		telegramNotifier:      telegramNotifier,
 	}
 }
 
@@ -119,11 +123,31 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 		parsedUUID, err := uuid.Parse(plantSourceIdStr)
 		if err != nil {
 			log.Printf("ERROR: Invalid plant_source_id format: %v - Message will be retried or sent to DLQ", err)
+
+			// Notificar error de UUID inválido a Telegram
+			if notifyErr := h.telegramNotifier.SendUUIDError(
+				"plant_source_id",
+				plantSourceIdStr,
+				fmt.Sprintf("Error al parsear UUID: %v. EventType: %s, PlantName: %s", err, safeEventType, safePlantName),
+			); notifyErr != nil {
+				log.Printf("Failed to send Telegram notification: %v", notifyErr)
+			}
+
 			return fmt.Errorf("invalid plant_source_id format: %v", err)
 		}
 		plantSourceId = parsedUUID
 	} else {
 		log.Printf("ERROR: plant_source_id not found in message - Message will be retried or sent to DLQ")
+
+		// Notificar campo faltante a Telegram
+		if notifyErr := h.telegramNotifier.SendValidationError(
+			"plant_source_id",
+			"campo ausente",
+			fmt.Sprintf("El campo plant_source_id no está presente en el mensaje. EventType: %s, PlantName: %s", safeEventType, safePlantName),
+		); notifyErr != nil {
+			log.Printf("Failed to send Telegram notification: %v", notifyErr)
+		}
+
 		return fmt.Errorf("missing plant_source_id field in message")
 	}
 
@@ -137,6 +161,16 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 	if !exists {
 		log.Printf("ERROR: Event rejected - plant_source_id=%s does not exist in database. EventType=%s, Source=%s - Message will be retried or sent to DLQ",
 			plantSourceId, eventType, source)
+
+		// Notificar planta inexistente a Telegram
+		if notifyErr := h.telegramNotifier.SendValidationError(
+			"plant_source_id",
+			plantSourceId.String(),
+			fmt.Sprintf("La planta con ID %s no existe en la base de datos. EventType: %s, Source: %s", plantSourceId, eventType, source),
+		); notifyErr != nil {
+			log.Printf("Failed to send Telegram notification: %v", notifyErr)
+		}
+
 		return fmt.Errorf("plant_source_id=%s does not exist in database (eventType=%s, source=%s)",
 			plantSourceId, eventType, source)
 	}

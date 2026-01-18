@@ -23,12 +23,18 @@ type Config struct {
 
 	// CORS
 	AllowedCorsSuffixes string `env:"ALLOWED_CORS_SUFFIXES" envDefault:".spotcloud.io"`
+
+	// Telegram Notifications
+	TelegramEnabled bool   `env:"TELEGRAM_ENABLED" envDefault:"false"`
+	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN"`
+	TelegramChatID   string `env:"TELEGRAM_CHAT_ID"`
 }
 
 func OnSetConfig(tag string, value interface{}, isDefault bool) {
 	if strings.Contains(tag, "SECRET") ||
 		strings.Contains(tag, "PASSWORD") ||
-		strings.Contains(tag, "API_KEY") {
+		strings.Contains(tag, "API_KEY") ||
+		strings.Contains(tag, "TOKEN") {
 		if s, ok := value.(string); ok && len(s) > 4 {
 			rune := []rune(s)
 			repeatedStars := strings.Repeat("*", len(rune)-4)

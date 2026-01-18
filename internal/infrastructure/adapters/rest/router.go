@@ -34,5 +34,12 @@ func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
 			events.GET("/:id", GetEvent(c))                // GET /api/v1/events/:id - Obtiene uno por ID
 			events.GET("/type/:type", GetEventsByType(c)) // GET /api/v1/events/type/:type - Filtra por tipo
 		}
+
+		// CAMBIO: Agregado grupo de endpoints para pruebas
+		// RAZÓN: Permite probar validaciones y notificaciones de Telegram via Swagger
+		test := api.Group("/test")
+		{
+			test.POST("/intake", TestIntake(c)) // POST /api/v1/test/intake - Simula mensaje de Kafka
+		}
 	}
 }

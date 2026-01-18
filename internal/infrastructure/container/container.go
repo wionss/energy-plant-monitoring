@@ -9,6 +9,7 @@ import (
 	"monitoring-energy-service/internal/infrastructure/adapters/http/webhook"
 	"monitoring-energy-service/internal/infrastructure/adapters/kafka"
 	"monitoring-energy-service/internal/infrastructure/adapters/repositories"
+	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 	"monitoring-energy-service/internal/infrastructure/conf"
 	"monitoring-energy-service/internal/infrastructure/conf/kafkaconf"
 
@@ -23,6 +24,7 @@ type ContainerOption func(*Container)
 // - Agregado EventRepository: Para acceso a base de datos de eventos
 // - Agregado EventGenerator: Para generar eventos automáticamente
 // - Agregado EnergyPlantRepository: Para validar plantas antes de guardar eventos
+// - Agregado TelegramNotifier: Para notificar errores de validación a Telegram
 type Container struct {
 	db                    *gorm.DB
 	cfg                   conf.Config
@@ -32,6 +34,7 @@ type Container struct {
 	EventRepository       output.EventRepositoryInterface       // Para gestionar eventos en DB
 	EnergyPlantRepository output.EnergyPlantRepositoryInterface // Para validar plantas
 	EventGenerator        *api.EventGenerator                   // Para generar eventos cada 5 min
+	TelegramNotifier      *telegram.Notifier                    // Para notificar errores a Telegram
 }
 
 func NewContainer(
@@ -72,10 +75,18 @@ func NewContainer(
 	webhookAdapter := webhook.NewAdapter(httpClient)
 	container.WebhookAdapter = webhookAdapter
 
+	// Initialize Telegram notifier
+	telegramNotifier := telegram.NewNotifier(
+		container.cfg.TelegramBotToken,
+		container.cfg.TelegramChatID,
+		container.cfg.TelegramEnabled,
+	)
+	container.TelegramNotifier = telegramNotifier
+
 	// Register Kafka handlers here
-	// CAMBIO: IntakeHandler ahora recibe eventRepository y energyPlantRepository
-	// RAZÓN: Necesita validar plantas antes de guardar eventos
-	intakeHandler := api.NewIntakeHandler(eventRepository, energyPlantRepository)
+	// CAMBIO: IntakeHandler ahora recibe eventRepository, energyPlantRepository y telegramNotifier
+	// RAZÓN: Necesita validar plantas antes de guardar eventos y notificar errores a Telegram
+	intakeHandler := api.NewIntakeHandler(eventRepository, energyPlantRepository, telegramNotifier)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
 	// CAMBIO: Inicializa Event Generator con topic "intake"
