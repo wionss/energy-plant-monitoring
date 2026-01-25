@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"monitoring-energy-service/internal/domain/entities"
 	"monitoring-energy-service/internal/domain/ports/input"
@@ -21,28 +22,31 @@ import (
 // Actúa como consumer de Kafka para el topic "intake", recibiendo eventos y
 // guardándolos en PostgreSQL para análisis posterior.
 //
-// CAMBIO REALIZADO: Se agregó EventRepository y EnergyPlantRepository como dependencias
-// RAZÓN: Necesitábamos persistir los eventos y validar que las plantas existen
+// CAMBIO REALIZADO: Refactorizado para usar DualEventWriter (escritura dual)
+// RAZÓN: Arquitectura multi-esquema con operational y analytical
 type IntakeHandler struct {
-	eventRepository      output.EventRepositoryInterface      // Para guardar eventos en DB
+	dualWriter            output.DualEventWriterInterface       // Para escritura dual (operational + analytical)
 	energyPlantRepository output.EnergyPlantRepositoryInterface // Para validar que las plantas existen
-	telegramNotifier     *telegram.Notifier                    // Para notificar errores de validación
+	telegramNotifier      *telegram.Notifier                    // Para notificar errores de validación
+	useAsyncWrite         bool                                  // true = async (mejor throughput), false = sync (garantía)
 }
 
 var _ input.MessageHandler = &IntakeHandler{}
 
 // NewIntakeHandler crea una nueva instancia del handler de Kafka
-// CAMBIO: Ahora recibe eventRepository y energyPlantRepository como parámetros
-// RAZÓN: Necesita validar plantas antes de guardar eventos
+// CAMBIO: Ahora recibe dualWriter para escritura dual
+// RAZÓN: Arquitectura multi-esquema con operational y analytical
 func NewIntakeHandler(
-	eventRepository output.EventRepositoryInterface,
+	dualWriter output.DualEventWriterInterface,
 	energyPlantRepository output.EnergyPlantRepositoryInterface,
 	telegramNotifier *telegram.Notifier,
+	useAsyncWrite bool,
 ) *IntakeHandler {
 	return &IntakeHandler{
-		eventRepository:       eventRepository,
+		dualWriter:            dualWriter,
 		energyPlantRepository: energyPlantRepository,
 		telegramNotifier:      telegramNotifier,
+		useAsyncWrite:         useAsyncWrite,
 	}
 }
 
@@ -185,23 +189,48 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 		return err
 	}
 
-	// CAMBIO: Crea entidad de evento
-	// RAZÓN: Mapea el mensaje de Kafka a nuestra estructura de base de datos
-	event := &entities.EventEntity{
+	// CAMBIO: Genera ID y timestamp una sola vez para ambas tablas
+	// RAZÓN: Garantiza que el mismo evento tenga el mismo ID en operational y analytical
+	now := time.Now()
+	eventId := uuid.New()
+
+	// CAMBIO: Crea entidad operacional (datos calientes)
+	// RAZÓN: Para consultas frecuentes con FK a energy_plants
+	eventOp := &entities.EventOperational{
+		ID:            eventId,
+		EventType:     eventType,
+		PlantSourceId: plantSourceId,
+		Source:        source,
+		Data:          string(dataJSON),
+		CreatedAt:     now,
+	}
+
+	// CAMBIO: Crea entidad analítica (datos fríos - TimescaleDB)
+	// RAZÓN: Para análisis temporal y agregaciones con time_bucket
+	eventAn := &entities.EventAnalytical{
+		CreatedAt:     now,
+		ID:            eventId,
 		EventType:     eventType,
 		PlantSourceId: plantSourceId,
 		Source:        source,
 		Data:          string(dataJSON),
 	}
 
-	// CAMBIO: Guarda en PostgreSQL
-	// RAZÓN: Persiste el evento para consultas posteriores via API REST o DBeaver
-	savedEvent, err := h.eventRepository.Create(event)
-	if err != nil {
-		log.Printf("Error saving event to database: %v", err)
-		return err
+	// CAMBIO: Usa DualEventWriter para guardar en ambas tablas
+	// RAZÓN: Arquitectura multi-esquema (operational + analytical)
+	if h.useAsyncWrite {
+		if err := h.dualWriter.SaveEventAsync(eventOp, eventAn); err != nil {
+			log.Printf("Error saving event async: %v", err)
+			return err
+		}
+		log.Printf("Event enqueued for async save: ID=%s, Type=%s", eventId, eventType)
+	} else {
+		if err := h.dualWriter.SaveEvent(eventOp, eventAn); err != nil {
+			log.Printf("Error saving event to database: %v", err)
+			return err
+		}
+		log.Printf("Event saved to both operational and analytical: ID=%s, Type=%s", eventId, eventType)
 	}
 
-	log.Printf("Event saved to database with ID: %s, Type: %s", savedEvent.ID, savedEvent.EventType)
 	return nil
 }

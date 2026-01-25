@@ -17,5 +17,5 @@ type EnergyPlants struct {
 }
 
 func (EnergyPlants) TableName() string {
-	return "energy_plants"
+	return "master.energy_plants"
 }

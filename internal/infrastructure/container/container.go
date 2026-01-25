@@ -21,8 +21,10 @@ type ContainerOption func(*Container)
 // Container mantiene todas las dependencias de la aplicación (Dependency Injection)
 //
 // CAMBIOS REALIZADOS:
-// - Agregado EventRepository: Para acceso a base de datos de eventos
-// - Agregado EventGenerator: Para generar eventos automáticamente
+// - Agregado EventRepository: Para acceso a base de datos de eventos (legacy)
+// - Agregado EventOperationalRepo: Para datos calientes (operational.events_std)
+// - Agregado EventAnalyticalRepo: Para datos fríos (analytical.events_ts)
+// - Agregado DualEventWriter: Para escritura dual a ambas tablas
 // - Agregado EnergyPlantRepository: Para validar plantas antes de guardar eventos
 // - Agregado TelegramNotifier: Para notificar errores de validación a Telegram
 type Container struct {
@@ -31,10 +33,13 @@ type Container struct {
 	KafkaService          input.KafkaServiceInterface
 	WebhookAdapter        output.WebhookAdapterInterface
 	ExampleRepository     output.ExampleRepositoryInterface
-	EventRepository       output.EventRepositoryInterface       // Para gestionar eventos en DB
-	EnergyPlantRepository output.EnergyPlantRepositoryInterface // Para validar plantas
-	EventGenerator        *api.EventGenerator                   // Para generar eventos cada 5 min
-	TelegramNotifier      *telegram.Notifier                    // Para notificar errores a Telegram
+	EventRepository       output.EventRepositoryInterface           // Legacy - Para gestionar eventos en DB
+	EventOperationalRepo  output.EventOperationalRepositoryInterface // Datos calientes
+	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface  // Datos fríos (TimescaleDB)
+	DualEventWriter       output.DualEventWriterInterface            // Escritura dual
+	EnergyPlantRepository output.EnergyPlantRepositoryInterface      // Para validar plantas
+	EventGenerator        *api.EventGenerator                        // Para generar eventos cada 5 min
+	TelegramNotifier      *telegram.Notifier                         // Para notificar errores a Telegram
 }
 
 func NewContainer(
@@ -55,8 +60,8 @@ func NewContainer(
 	exampleRepository := repositories.NewExampleRepository(db)
 	container.ExampleRepository = exampleRepository
 
-	// CAMBIO: Inicializa EventRepository
-	// RAZÓN: Necesario para que IntakeHandler y REST API puedan acceder a eventos en DB
+	// CAMBIO: Inicializa EventRepository (legacy)
+	// RAZÓN: Mantiene compatibilidad con API REST existente
 	eventRepository := repositories.NewEventRepository(db)
 	container.EventRepository = eventRepository
 
@@ -64,6 +69,19 @@ func NewContainer(
 	// RAZÓN: Necesario para validar que las plantas existen antes de guardar eventos
 	energyPlantRepository := repositories.NewEnergyPlantRepository(db)
 	container.EnergyPlantRepository = energyPlantRepository
+
+	// CAMBIO: Inicializa repositorios multi-esquema
+	// RAZÓN: Arquitectura con operational (datos calientes) y analytical (datos fríos)
+	eventOpRepo := repositories.NewEventOperationalRepository(db)
+	container.EventOperationalRepo = eventOpRepo
+
+	eventAnRepo := repositories.NewEventAnalyticalRepository(db)
+	container.EventAnalyticalRepo = eventAnRepo
+
+	// CAMBIO: Inicializa DualEventWriter con 4 workers para async
+	// RAZÓN: Permite escritura dual a operational y analytical
+	dualWriter := repositories.NewDualEventWriter(db, eventOpRepo, eventAnRepo, 4)
+	container.DualEventWriter = dualWriter
 
 	// Initialize Kafka
 	kafkaFactory := kafkaconf.NewKafkaFactory(kafkaBrokers, autoOffset)
@@ -84,9 +102,9 @@ func NewContainer(
 	container.TelegramNotifier = telegramNotifier
 
 	// Register Kafka handlers here
-	// CAMBIO: IntakeHandler ahora recibe eventRepository, energyPlantRepository y telegramNotifier
-	// RAZÓN: Necesita validar plantas antes de guardar eventos y notificar errores a Telegram
-	intakeHandler := api.NewIntakeHandler(eventRepository, energyPlantRepository, telegramNotifier)
+	// CAMBIO: IntakeHandler ahora usa DualEventWriter para escritura dual
+	// RAZÓN: Arquitectura multi-esquema (operational + analytical)
+	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, telegramNotifier, true)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
 	// CAMBIO: Inicializa Event Generator con topic "intake"
