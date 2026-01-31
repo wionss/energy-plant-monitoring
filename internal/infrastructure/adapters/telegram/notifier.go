@@ -4,17 +4,25 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
+type alertMessage struct {
+	text string
+}
+
 type Notifier struct {
-	botToken string
-	chatID   string
-	enabled  bool
-	client   *http.Client
+	botToken  string
+	chatID    string
+	enabled   bool
+	client    *http.Client
+	alertChan chan alertMessage
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 }
 
 type sendMessageRequest struct {
@@ -29,19 +37,54 @@ type telegramResponse struct {
 }
 
 func NewNotifier(botToken, chatID string, enabled bool) *Notifier {
-	return &Notifier{
-		botToken: botToken,
-		chatID:   chatID,
-		enabled:  enabled,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+	n := &Notifier{
+		botToken:  botToken,
+		chatID:    chatID,
+		enabled:   enabled,
+		client:    &http.Client{Timeout: 10 * time.Second},
+		alertChan: make(chan alertMessage, 100),
 	}
+
+	n.wg.Add(1)
+	go n.worker()
+
+	return n
+}
+
+func (n *Notifier) worker() {
+	defer n.wg.Done()
+
+	for msg := range n.alertChan {
+		if err := n.sendMessage(msg.text); err != nil {
+			slog.Error("failed to send Telegram notification", "error", err)
+		} else {
+			slog.Info("Telegram notification sent")
+		}
+		// Simple rate limit: 1 message per 100ms
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (n *Notifier) enqueue(text string) {
+	select {
+	case n.alertChan <- alertMessage{text: text}:
+	default:
+		slog.Warn("Telegram alert channel full, dropping message")
+	}
+}
+
+func (n *Notifier) Stop() {
+	n.stopOnce.Do(func() {
+		slog.Info("stopping Telegram notifier")
+		close(n.alertChan)
+		n.wg.Wait()
+		slog.Info("Telegram notifier stopped")
+	})
 }
 
 func (n *Notifier) SendErrorNotification(errorType, message, context string) error {
 	if !n.enabled {
-		log.Printf("Telegram notifications disabled. Would have sent: %s - %s", errorType, message)
+		slog.Info("Telegram notifications disabled", "error_type", errorType, "message", message)
 		return nil
 	}
 
@@ -50,8 +93,8 @@ func (n *Notifier) SendErrorNotification(errorType, message, context string) err
 	}
 
 	text := n.formatErrorMessage(errorType, message, context)
-
-	return n.sendMessage(text)
+	n.enqueue(text)
+	return nil
 }
 
 func (n *Notifier) formatErrorMessage(errorType, message, context string) string {
@@ -107,7 +150,6 @@ func (n *Notifier) sendMessage(text string) error {
 		return fmt.Errorf("telegram API error: %s", telegramResp.Description)
 	}
 
-	log.Printf("Telegram notification sent successfully")
 	return nil
 }
 

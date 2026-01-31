@@ -1,10 +1,13 @@
 package main
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"monitoring-energy-service/docs"
@@ -42,20 +45,21 @@ var (
 
 // @schemes http https
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	// Initialize structured JSON logging
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	log.Printf("build date: %s", buildDate)
-	log.Printf("build git commit: %s", gitCommit)
+	slog.Info("starting application", "build_date", buildDate, "git_commit", gitCommit)
 
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Printf("WARNING - Couldn't load .env file, error: %v", err)
+		slog.Warn("couldn't load .env file", "error", err)
 	}
 
 	cfg := &conf.Config{}
 	opts := env.Options{OnSet: conf.OnSetConfig}
 	if err := env.ParseWithOptions(cfg, opts); err != nil {
-		log.Fatalf("%+v\n", err)
+		slog.Error("failed to parse config", "error", err)
+		os.Exit(1)
 	}
 
 	port := cfg.Port
@@ -70,19 +74,22 @@ func main() {
 
 	db, err := database.SetupDatabasePsql()
 	if err != nil {
-		log.Fatalf("Error when initializing database, error: %v", err)
+		slog.Error("failed to initialize database", "error", err)
+		os.Exit(1)
 	}
 
 	err = database.PerformMigrations(db)
 	if err != nil {
-		log.Fatalf("Error when performing migrations to database, error: %v", err)
+		slog.Error("failed to perform migrations", "error", err)
+		os.Exit(1)
 	}
 
 	err = database.SeedDB(db, "./db")
 	if err != nil {
-		log.Fatalf("Error when seeding database, error: %v", err)
+		slog.Error("failed to seed database", "error", err)
 		os.Exit(1)
 	}
+
 	timeoutSeconds := cfg.HttpClientTimeout
 	httpClient := &http.Client{
 		Timeout: time.Duration(timeoutSeconds) * time.Second,
@@ -100,7 +107,7 @@ func main() {
 	// Start Kafka consumer in background
 	go c.KafkaService.ConsumeEvents()
 
-	// Start Event Generator in background (sends 30 events every 5 minutes)
+	// Start Event Generator in background
 	go c.EventGenerator.Start()
 
 	router := gin.New()
@@ -149,15 +156,46 @@ func main() {
 	router.GET("/readyz", gin.WrapF(HealthCheck))
 
 	if environment == "dev" {
-		log.Printf("Running in development mode")
-		log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html", port)
+		slog.Info("running in development mode",
+			"swagger_url", "http://localhost:"+port+"/swagger/index.html",
+		)
 	}
 
-	log.Printf("Server starting on port %s", port)
-
-	if err := router.Run(":" + port); err != nil {
-		log.Fatalf("failed to run server: %v", err)
+	// Create HTTP server
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
 	}
+
+	// Graceful shutdown: listen for SIGINT/SIGTERM
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start HTTP server in a goroutine
+	go func() {
+		slog.Info("server starting", "port", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until signal received
+	sig := <-quit
+	slog.Info("signal received, starting graceful shutdown", "signal", sig)
+
+	// Shutdown application components
+	c.Shutdown()
+
+	// Shutdown HTTP server with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("server shutdown error", "error", err)
+	}
+
+	slog.Info("server exited gracefully")
 }
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {

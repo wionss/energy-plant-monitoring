@@ -8,45 +8,42 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// EventAnalyticalRepository implementa la capa de persistencia para eventos analíticos
-// Tabla: analytical.events_ts (TimescaleDB hypertable)
-//
-// PROPÓSITO:
-// Proporciona acceso a la base de datos TimescaleDB para operaciones sobre
-// eventos analíticos (datos fríos para análisis temporal y agregaciones)
 type EventAnalyticalRepository struct {
 	db *gorm.DB
 }
 
 var _ output.EventAnalyticalRepositoryInterface = &EventAnalyticalRepository{}
 
-// NewEventAnalyticalRepository crea una nueva instancia del repositorio
 func NewEventAnalyticalRepository(db *gorm.DB) *EventAnalyticalRepository {
 	return &EventAnalyticalRepository{db: db}
 }
 
-// Create guarda un nuevo evento analítico en la hypertable
 func (r *EventAnalyticalRepository) Create(entity *entities.EventAnalytical) (*entities.EventAnalytical, error) {
-	if err := r.db.Create(entity).Error; err != nil {
-		return nil, err
+	model := ToEventAnalyticalModel(entity)
+	result := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(model)
+	if result.Error != nil {
+		return nil, result.Error
 	}
-	return entity, nil
+	return ToEventAnalyticalEntity(model), nil
 }
 
-// FindByTimeRange obtiene eventos analíticos dentro de un rango de tiempo
 func (r *EventAnalyticalRepository) FindByTimeRange(start, end time.Time) ([]*entities.EventAnalytical, error) {
-	var events []*entities.EventAnalytical
+	var models []*EventAnalyticalModel
 	if err := r.db.Where("created_at >= ? AND created_at <= ?", start, end).
 		Order("created_at DESC").
-		Find(&events).Error; err != nil {
+		Find(&models).Error; err != nil {
 		return nil, err
 	}
-	return events, nil
+	result := make([]*entities.EventAnalytical, len(models))
+	for i, m := range models {
+		result[i] = ToEventAnalyticalEntity(m)
+	}
+	return result, nil
 }
 
-// GetHourlyAggregation obtiene agregaciones por hora usando time_bucket de TimescaleDB
 func (r *EventAnalyticalRepository) GetHourlyAggregation(plantId uuid.UUID, start, end time.Time) ([]output.AggregatedEvent, error) {
 	var results []output.AggregatedEvent
 
@@ -71,7 +68,6 @@ func (r *EventAnalyticalRepository) GetHourlyAggregation(plantId uuid.UUID, star
 	return results, nil
 }
 
-// GetDailyAggregation obtiene agregaciones por día usando time_bucket de TimescaleDB
 func (r *EventAnalyticalRepository) GetDailyAggregation(plantId uuid.UUID, start, end time.Time) ([]output.AggregatedEvent, error) {
 	var results []output.AggregatedEvent
 

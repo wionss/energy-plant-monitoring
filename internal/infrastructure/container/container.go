@@ -1,6 +1,7 @@
 package container
 
 import (
+	"log/slog"
 	"net/http"
 
 	"monitoring-energy-service/internal/api"
@@ -18,28 +19,19 @@ import (
 
 type ContainerOption func(*Container)
 
-// Container mantiene todas las dependencias de la aplicación (Dependency Injection)
-//
-// CAMBIOS REALIZADOS:
-// - Agregado EventRepository: Para acceso a base de datos de eventos (legacy)
-// - Agregado EventOperationalRepo: Para datos calientes (operational.events_std)
-// - Agregado EventAnalyticalRepo: Para datos fríos (analytical.events_ts)
-// - Agregado DualEventWriter: Para escritura dual a ambas tablas
-// - Agregado EnergyPlantRepository: Para validar plantas antes de guardar eventos
-// - Agregado TelegramNotifier: Para notificar errores de validación a Telegram
 type Container struct {
 	db                    *gorm.DB
 	cfg                   conf.Config
 	KafkaService          input.KafkaServiceInterface
 	WebhookAdapter        output.WebhookAdapterInterface
 	ExampleRepository     output.ExampleRepositoryInterface
-	EventRepository       output.EventRepositoryInterface           // Legacy - Para gestionar eventos en DB
-	EventOperationalRepo  output.EventOperationalRepositoryInterface // Datos calientes
-	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface  // Datos fríos (TimescaleDB)
-	DualEventWriter       output.DualEventWriterInterface            // Escritura dual
-	EnergyPlantRepository output.EnergyPlantRepositoryInterface      // Para validar plantas
-	EventGenerator        *api.EventGenerator                        // Para generar eventos cada 5 min
-	TelegramNotifier      *telegram.Notifier                         // Para notificar errores a Telegram
+	EventRepository       output.EventRepositoryInterface
+	EventOperationalRepo  output.EventOperationalRepositoryInterface
+	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface
+	DualEventWriter       output.DualEventWriterInterface
+	EnergyPlantRepository output.EnergyPlantRepositoryInterface
+	EventGenerator        *api.EventGenerator
+	TelegramNotifier      *telegram.Notifier
 }
 
 func NewContainer(
@@ -60,34 +52,33 @@ func NewContainer(
 	exampleRepository := repositories.NewExampleRepository(db)
 	container.ExampleRepository = exampleRepository
 
-	// CAMBIO: Inicializa EventRepository (legacy)
-	// RAZÓN: Mantiene compatibilidad con API REST existente
 	eventRepository := repositories.NewEventRepository(db)
 	container.EventRepository = eventRepository
 
-	// CAMBIO: Inicializa EnergyPlantRepository
-	// RAZÓN: Necesario para validar que las plantas existen antes de guardar eventos
 	energyPlantRepository := repositories.NewEnergyPlantRepository(db)
 	container.EnergyPlantRepository = energyPlantRepository
 
-	// CAMBIO: Inicializa repositorios multi-esquema
-	// RAZÓN: Arquitectura con operational (datos calientes) y analytical (datos fríos)
 	eventOpRepo := repositories.NewEventOperationalRepository(db)
 	container.EventOperationalRepo = eventOpRepo
 
 	eventAnRepo := repositories.NewEventAnalyticalRepository(db)
 	container.EventAnalyticalRepo = eventAnRepo
 
-	// CAMBIO: Inicializa DualEventWriter con 4 workers para async
-	// RAZÓN: Permite escritura dual a operational y analytical
-	dualWriter := repositories.NewDualEventWriter(db, eventOpRepo, eventAnRepo, 4)
-	container.DualEventWriter = dualWriter
-
-	// Initialize Kafka
+	// Initialize Kafka first (needed for spillover callback)
 	kafkaFactory := kafkaconf.NewKafkaFactory(kafkaBrokers, autoOffset)
 	kafkaAdapter := kafka.NewKafkaAdapter(kafkaFactory, consumerGroup)
 	kafkaService := api.NewKafkaService(kafkaAdapter)
 	container.KafkaService = kafkaService
+
+	// Initialize DualEventWriter with spillover callback wired to Kafka DLQ
+	dualWriter := repositories.NewDualEventWriterWithConfig(db, repositories.DualEventWriterConfig{
+		OpWorkerCount: 2,
+		AnWorkerCount: 2,
+		SpilloverFunc: func(eventData []byte, reason string) {
+			kafkaService.SendToDLQ(eventData, "spillover: "+reason)
+		},
+	})
+	container.DualEventWriter = dualWriter
 
 	// Initialize Webhook adapter
 	webhookAdapter := webhook.NewAdapter(httpClient)
@@ -101,14 +92,11 @@ func NewContainer(
 	)
 	container.TelegramNotifier = telegramNotifier
 
-	// Register Kafka handlers here
-	// CAMBIO: IntakeHandler ahora usa DualEventWriter para escritura dual
-	// RAZÓN: Arquitectura multi-esquema (operational + analytical)
+	// Register Kafka handlers
 	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, telegramNotifier, true)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
-	// CAMBIO: Inicializa Event Generator con topic "intake"
-	// RAZÓN: Genera automáticamente 30 eventos cada 5 minutos enviándolos a Kafka
+	// Initialize Event Generator
 	eventGenerator := api.NewEventGenerator(kafkaService, "intake")
 	container.EventGenerator = eventGenerator
 
@@ -123,4 +111,38 @@ func WithConfig(config conf.Config) ContainerOption {
 
 func (c *Container) GetConfig() conf.Config {
 	return c.cfg
+}
+
+// Shutdown performs an ordered shutdown of all components.
+func (c *Container) Shutdown() {
+	slog.Info("shutting down application components")
+
+	// 1. Stop Kafka consumer
+	slog.Info("stopping Kafka consumer")
+	c.KafkaService.StopConsuming()
+
+	// 2. Stop event generator
+	slog.Info("stopping event generator")
+	c.EventGenerator.Stop()
+
+	// 3. Stop dual event writer (drains async channel)
+	slog.Info("stopping dual event writer")
+	c.DualEventWriter.Stop()
+
+	// 4. Stop Telegram notifier (drains alert channel)
+	slog.Info("stopping Telegram notifier")
+	c.TelegramNotifier.Stop()
+
+	// 5. Close database connection
+	slog.Info("closing database connection")
+	sqlDB, err := c.db.DB()
+	if err != nil {
+		slog.Error("failed to get underlying sql.DB", "error", err)
+	} else {
+		if err := sqlDB.Close(); err != nil {
+			slog.Error("failed to close database", "error", err)
+		}
+	}
+
+	slog.Info("shutdown complete")
 }

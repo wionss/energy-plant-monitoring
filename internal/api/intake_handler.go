@@ -5,10 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"monitoring-energy-service/internal/domain/entities"
+	domainerrors "monitoring-energy-service/internal/domain/errors"
 	"monitoring-energy-service/internal/domain/ports/input"
 	"monitoring-energy-service/internal/domain/ports/output"
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
@@ -17,25 +18,15 @@ import (
 )
 
 // IntakeHandler procesa mensajes consumidos desde Kafka
-//
-// PROPÓSITO:
-// Actúa como consumer de Kafka para el topic "intake", recibiendo eventos y
-// guardándolos en PostgreSQL para análisis posterior.
-//
-// CAMBIO REALIZADO: Refactorizado para usar DualEventWriter (escritura dual)
-// RAZÓN: Arquitectura multi-esquema con operational y analytical
 type IntakeHandler struct {
-	dualWriter            output.DualEventWriterInterface       // Para escritura dual (operational + analytical)
-	energyPlantRepository output.EnergyPlantRepositoryInterface // Para validar que las plantas existen
-	telegramNotifier      *telegram.Notifier                    // Para notificar errores de validación
-	useAsyncWrite         bool                                  // true = async (mejor throughput), false = sync (garantía)
+	dualWriter            output.DualEventWriterInterface
+	energyPlantRepository output.EnergyPlantRepositoryInterface
+	telegramNotifier      *telegram.Notifier
+	useAsyncWrite         bool
 }
 
 var _ input.MessageHandler = &IntakeHandler{}
 
-// NewIntakeHandler crea una nueva instancia del handler de Kafka
-// CAMBIO: Ahora recibe dualWriter para escritura dual
-// RAZÓN: Arquitectura multi-esquema con operational y analytical
 func NewIntakeHandler(
 	dualWriter output.DualEventWriterInterface,
 	energyPlantRepository output.EnergyPlantRepositoryInterface,
@@ -50,25 +41,18 @@ func NewIntakeHandler(
 	}
 }
 
-// HandleMessage procesa cada mensaje recibido desde Kafka
-//
-// FLUJO:
-// 1. Recibe mensaje como bytes desde Kafka
-// 2. Deserializa el JSON a un mapa
-// 3. Extrae event_type y plant_name
-// 4. Convierte los datos a JSON string
-// 5. Crea una entidad EventEntity
-// 6. Guarda en PostgreSQL usando el repositorio
-//
-// CAMBIO REALIZADO: Completamente reescrito desde el TODO inicial
-// RAZÓN: Implementar la persistencia de eventos en PostgreSQL
+// deterministicID generates a UUID v5 from the SHA-256 hash of the payload.
+// This guarantees idempotency: the same message always produces the same ID.
+func deterministicID(payload []byte) uuid.UUID {
+	hash := sha256.Sum256(payload)
+	// Use the first 16 bytes of the SHA-256 hash as a UUID v5 namespace seed.
+	return uuid.NewSHA1(uuid.NameSpaceDNS, hash[:])
+}
+
 func (h *IntakeHandler) HandleMessage(message []byte) error {
-	// CAMBIO: Log safe metadata instead of raw message to avoid exposing PII
-	// RAZÓN: Evita exponer datos sensibles en logs, usa hash y tamaño del mensaje
 	hash := sha256.Sum256(message)
 	hashHex := hex.EncodeToString(hash[:])
 
-	// Preview: primeros 50 bytes (o menos si el mensaje es más corto)
 	previewLen := 50
 	if len(message) < previewLen {
 		previewLen = len(message)
@@ -78,19 +62,20 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 		preview += "..."
 	}
 
-	log.Printf("Received message on intake topic - Size: %d bytes, SHA256: %s, Preview: %s",
-		len(message), hashHex, preview)
+	slog.Info("received message on intake topic",
+		"size", len(message),
+		"sha256", hashHex,
+		"preview", preview,
+	)
 
-	// CAMBIO: Parse del mensaje JSON
-	// RAZÓN: Necesitamos extraer campos específicos (event_type, plant_name)
+	// Parse JSON
 	var data map[string]interface{}
 	if err := json.Unmarshal(message, &data); err != nil {
-		log.Printf("Error unmarshaling message: %v", err)
-		return err
+		slog.Error("invalid JSON message", "error", err)
+		return domainerrors.NewPermanentError("invalid JSON", err)
 	}
 
-	// CAMBIO: Log solo campos seguros después del parsing
-	// RAZÓN: Permite debugging sin exponer payload completo con posible PII
+	// Extract safe fields for logging
 	safeEventType := "unknown"
 	if et, ok := data["event_type"].(string); ok {
 		safeEventType = et
@@ -103,133 +88,116 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 	if psid, ok := data["plant_source_id"].(string); ok {
 		safePlantSourceId = psid
 	}
-	log.Printf("Parsed safe fields - EventType: %s, PlantName: %s, PlantSourceId: %s",
-		safeEventType, safePlantName, safePlantSourceId)
+	slog.Info("parsed safe fields",
+		"event_type", safeEventType,
+		"plant_name", safePlantName,
+		"plant_source_id", safePlantSourceId,
+	)
 
-	// CAMBIO: Extrae event_type del mensaje
-	// RAZÓN: Indexamos por event_type para filtrado rápido en queries
-	eventType := "unknown"
-	if et, ok := data["event_type"].(string); ok {
-		eventType = et
-	}
-
-	// CAMBIO: Extrae plant_name como source
-	// RAZÓN: Permite identificar de qué planta viene cada evento
+	eventType := safeEventType
 	source := "kafka-intake"
 	if plantName, ok := data["plant_name"].(string); ok {
 		source = plantName
 	}
 
-	// CAMBIO: Extrae plant_source_id del mensaje
-	// RAZÓN: Necesitamos el UUID de la planta para relacionar el evento con la tabla energy_plants
+	// Validate plant_source_id
 	var plantSourceId uuid.UUID
 	if plantSourceIdStr, ok := data["plant_source_id"].(string); ok {
 		parsedUUID, err := uuid.Parse(plantSourceIdStr)
 		if err != nil {
-			log.Printf("ERROR: Invalid plant_source_id format: %v - Message will be retried or sent to DLQ", err)
-
-			// Notificar error de UUID inválido a Telegram
-			if notifyErr := h.telegramNotifier.SendUUIDError(
+			slog.Error("invalid plant_source_id format", "error", err)
+			h.telegramNotifier.SendUUIDError(
 				"plant_source_id",
 				plantSourceIdStr,
 				fmt.Sprintf("Error al parsear UUID: %v. EventType: %s, PlantName: %s", err, safeEventType, safePlantName),
-			); notifyErr != nil {
-				log.Printf("Failed to send Telegram notification: %v", notifyErr)
-			}
-
-			return fmt.Errorf("invalid plant_source_id format: %v", err)
+			)
+			return domainerrors.NewPermanentError("invalid plant_source_id format", err)
 		}
 		plantSourceId = parsedUUID
 	} else {
-		log.Printf("ERROR: plant_source_id not found in message - Message will be retried or sent to DLQ")
-
-		// Notificar campo faltante a Telegram
-		if notifyErr := h.telegramNotifier.SendValidationError(
+		slog.Error("plant_source_id not found in message")
+		h.telegramNotifier.SendValidationError(
 			"plant_source_id",
 			"campo ausente",
 			fmt.Sprintf("El campo plant_source_id no está presente en el mensaje. EventType: %s, PlantName: %s", safeEventType, safePlantName),
-		); notifyErr != nil {
-			log.Printf("Failed to send Telegram notification: %v", notifyErr)
-		}
-
-		return fmt.Errorf("missing plant_source_id field in message")
+		)
+		return domainerrors.NewPermanentError("missing plant_source_id field", nil)
 	}
 
-	// CAMBIO: Validar que la planta existe en la base de datos
-	// RAZÓN: Solo guardamos eventos de plantas válidas para mantener integridad referencial
+	// Validate plant exists
 	exists, err := h.energyPlantRepository.Exists(plantSourceId)
 	if err != nil {
-		log.Printf("ERROR: Failed to validate plant existence for plant_source_id=%s: %v", plantSourceId, err)
-		return err
+		slog.Error("failed to validate plant existence",
+			"plant_source_id", plantSourceId,
+			"error", err,
+		)
+		return domainerrors.NewTransientError("database error checking plant existence", err)
 	}
 	if !exists {
-		log.Printf("ERROR: Event rejected - plant_source_id=%s does not exist in database. EventType=%s, Source=%s - Message will be retried or sent to DLQ",
-			plantSourceId, eventType, source)
-
-		// Notificar planta inexistente a Telegram
-		if notifyErr := h.telegramNotifier.SendValidationError(
+		slog.Error("plant does not exist",
+			"plant_source_id", plantSourceId,
+			"event_type", eventType,
+			"source", source,
+		)
+		h.telegramNotifier.SendValidationError(
 			"plant_source_id",
 			plantSourceId.String(),
 			fmt.Sprintf("La planta con ID %s no existe en la base de datos. EventType: %s, Source: %s", plantSourceId, eventType, source),
-		); notifyErr != nil {
-			log.Printf("Failed to send Telegram notification: %v", notifyErr)
-		}
-
-		return fmt.Errorf("plant_source_id=%s does not exist in database (eventType=%s, source=%s)",
-			plantSourceId, eventType, source)
+		)
+		return domainerrors.NewTransientError(
+			fmt.Sprintf("plant_source_id=%s does not exist", plantSourceId), nil,
+		)
 	}
 
-	log.Printf("✓ Plant validated successfully: plant_source_id=%s", plantSourceId)
+	slog.Info("plant validated", "plant_source_id", plantSourceId)
 
-	// CAMBIO: Convierte data completo a JSON string
-	// RAZÓN: PostgreSQL almacena el JSON completo como texto para consultas posteriores
-	dataJSON, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Error marshaling data: %v", err)
-		return err
-	}
+	// Use raw JSON bytes directly (no re-marshal to string)
+	dataJSON := json.RawMessage(message)
 
-	// CAMBIO: Genera ID y timestamp una sola vez para ambas tablas
-	// RAZÓN: Garantiza que el mismo evento tenga el mismo ID en operational y analytical
+	// Idempotent ID: use "id" from message if present, otherwise generate deterministic UUID
 	now := time.Now()
-	eventId := uuid.New()
+	var eventId uuid.UUID
+	if idStr, ok := data["id"].(string); ok {
+		parsed, err := uuid.Parse(idStr)
+		if err != nil {
+			eventId = deterministicID(message)
+		} else {
+			eventId = parsed
+		}
+	} else {
+		eventId = deterministicID(message)
+	}
 
-	// CAMBIO: Crea entidad operacional (datos calientes)
-	// RAZÓN: Para consultas frecuentes con FK a energy_plants
 	eventOp := &entities.EventOperational{
 		ID:            eventId,
 		EventType:     eventType,
 		PlantSourceId: plantSourceId,
 		Source:        source,
-		Data:          string(dataJSON),
+		Data:          dataJSON,
 		CreatedAt:     now,
 	}
 
-	// CAMBIO: Crea entidad analítica (datos fríos - TimescaleDB)
-	// RAZÓN: Para análisis temporal y agregaciones con time_bucket
 	eventAn := &entities.EventAnalytical{
 		CreatedAt:     now,
 		ID:            eventId,
 		EventType:     eventType,
 		PlantSourceId: plantSourceId,
 		Source:        source,
-		Data:          string(dataJSON),
+		Data:          dataJSON,
 	}
 
-	// CAMBIO: Usa DualEventWriter para guardar en ambas tablas
-	// RAZÓN: Arquitectura multi-esquema (operational + analytical)
 	if h.useAsyncWrite {
 		if err := h.dualWriter.SaveEventAsync(eventOp, eventAn); err != nil {
-			log.Printf("Error saving event async: %v", err)
-			return err
+			slog.Error("error saving event async", "error", err)
+			return domainerrors.NewTransientError("async save failed", err)
 		}
-		log.Printf("Event enqueued for async save: ID=%s, Type=%s", eventId, eventType)
+		slog.Info("event enqueued for async save", "id", eventId, "type", eventType)
 	} else {
 		if err := h.dualWriter.SaveEvent(eventOp, eventAn); err != nil {
-			log.Printf("Error saving event to database: %v", err)
-			return err
+			slog.Error("error saving event to database", "error", err)
+			return domainerrors.NewTransientError("sync save failed", err)
 		}
-		log.Printf("Event saved to both operational and analytical: ID=%s, Type=%s", eventId, eventType)
+		slog.Info("event saved to both tables", "id", eventId, "type", eventType)
 	}
 
 	return nil

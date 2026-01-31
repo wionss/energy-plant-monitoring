@@ -17,6 +17,7 @@ type KafkaServiceInterface interface {
 	RegisterHandler(topic string, handler MessageHandler)
 	ConsumeEvents()
 	StopConsuming()
+	SendToDLQ(message []byte, reason string)
 }
 
 // ExampleServiceInterface defines the contract for example business logic
