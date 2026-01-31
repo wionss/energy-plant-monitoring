@@ -1,6 +1,6 @@
 -- +goose Up
--- create "energy_plants" table
-CREATE TABLE "energy_plants" (
+-- create "energy_plants" table in master schema
+CREATE TABLE "master"."energy_plants" (
   "id" uuid NOT NULL DEFAULT gen_random_uuid(),
   "plant_name" character varying(255) NOT NULL,
   "location" character varying(255) NULL,
@@ -11,7 +11,7 @@ CREATE TABLE "energy_plants" (
   PRIMARY KEY ("id")
 );
 -- create index "idx_energy_plants_deleted_at" to table: "energy_plants"
-CREATE INDEX "idx_energy_plants_deleted_at" ON "energy_plants" ("deleted_at");
+CREATE INDEX "idx_master_energy_plants_deleted_at" ON "master"."energy_plants" ("deleted_at");
 -- create "examples" table
 CREATE TABLE "examples" (
   "id" uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -27,11 +27,11 @@ CREATE TABLE "events" (
   "event_type" character varying(100) NOT NULL,
   "plant_source_id" uuid NOT NULL,
   "source" character varying(255) NULL,
-  "data" text NULL,
-  "metadata" text NULL,
+  "data" jsonb NOT NULL,
+  "metadata" jsonb NULL,
   "created_at" timestamptz NULL,
   PRIMARY KEY ("id"),
-  CONSTRAINT "fk_events_plant_source" FOREIGN KEY ("plant_source_id") REFERENCES "energy_plants" ("id") ON UPDATE NO ACTION ON DELETE NO ACTION
+  CONSTRAINT "fk_events_plant_source" FOREIGN KEY ("plant_source_id") REFERENCES "master"."energy_plants" ("id") ON UPDATE NO ACTION ON DELETE NO ACTION
 );
 -- create index "idx_created_at" to table: "events"
 CREATE INDEX "idx_created_at" ON "events" ("created_at");
@@ -51,7 +51,7 @@ DROP INDEX "idx_created_at";
 DROP TABLE "events";
 -- reverse: create "examples" table
 DROP TABLE "examples";
--- reverse: create index "idx_energy_plants_deleted_at" to table: "energy_plants"
-DROP INDEX "idx_energy_plants_deleted_at";
+-- reverse: create index "idx_master_energy_plants_deleted_at" to table: "energy_plants"
+DROP INDEX "master"."idx_master_energy_plants_deleted_at";
 -- reverse: create "energy_plants" table
-DROP TABLE "energy_plants";
+DROP TABLE "master"."energy_plants";

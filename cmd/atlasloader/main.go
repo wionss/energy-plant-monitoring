@@ -17,6 +17,9 @@ func main() {
 		&repositories.EventModel{},
 		&repositories.EventOperationalModel{},
 		&repositories.EventAnalyticalModel{},
+		// Analytics Worker models
+		&repositories.HourlyPlantStatsModel{},
+		&repositories.WebhookQueueModel{},
 	)
 	if err != nil {
 		slog.Error("Failed to load gorm schema", "err", err.Error())

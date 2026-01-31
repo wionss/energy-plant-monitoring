@@ -92,3 +92,17 @@ type AggregatedEvent struct {
 	EventType     string    `json:"event_type"`
 	EventCount    int64     `json:"event_count"`
 }
+
+// AnalyticsWorkerRepoInterface - contrato para agregaciones del worker de analytics
+type AnalyticsWorkerRepoInterface interface {
+	RecalculateDirtyBuckets(lookbackWindow time.Duration) (int, error)
+	GetPendingWebhooks(limit int) ([]*entities.WebhookQueueItem, error)
+	UpdateWebhookStatus(id uuid.UUID, status entities.WebhookStatus, errorMsg string) error
+	GetHourlyStats(bucket time.Time, plantId uuid.UUID) (*entities.HourlyPlantStats, error)
+}
+
+// AnalyticsCoordinatorInterface - contrato para el worker de analytics
+type AnalyticsCoordinatorInterface interface {
+	Start()
+	Stop()
+}

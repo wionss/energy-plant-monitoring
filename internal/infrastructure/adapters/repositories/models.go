@@ -207,3 +207,69 @@ func ToExampleEntity(m *ExampleModel) *entities.ExampleEntity {
 		UpdatedAt:   m.UpdatedAt,
 	}
 }
+
+// ============================================================================
+// Analytics Worker Models
+// ============================================================================
+
+// HourlyPlantStatsModel - estadísticas horarias pre-calculadas
+type HourlyPlantStatsModel struct {
+	Bucket           time.Time `gorm:"type:timestamptz;primaryKey"`
+	PlantSourceId    uuid.UUID `gorm:"type:uuid;primaryKey"`
+	AvgPowerGen      *float64  `gorm:"type:double precision"`
+	AvgPowerCon      *float64  `gorm:"type:double precision"`
+	AvgEfficiency    *float64  `gorm:"type:double precision"`
+	AvgTemp          *float64  `gorm:"type:double precision"`
+	SampleCount      int       `gorm:"not null;default:0"`
+	LastCalculatedAt time.Time `gorm:"type:timestamptz;not null;default:now()"`
+}
+
+func (HourlyPlantStatsModel) TableName() string {
+	return "analytical.hourly_plant_stats"
+}
+
+// WebhookQueueModel - cola de despacho de webhooks
+type WebhookQueueModel struct {
+	ID            uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Bucket        time.Time  `gorm:"type:timestamptz;not null;uniqueIndex:idx_wq_bucket_plant,priority:1"`
+	PlantSourceId uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_wq_bucket_plant,priority:2"`
+	Status        string     `gorm:"type:varchar(20);not null;default:'PENDING';index:idx_wq_status"`
+	Attempts      int        `gorm:"not null;default:0"`
+	LastAttempt   *time.Time `gorm:"type:timestamptz"`
+	NextRetryAt   *time.Time `gorm:"type:timestamptz;index:idx_wq_next_retry"`
+	ErrorMessage  *string    `gorm:"type:text"`
+	CreatedAt     time.Time  `gorm:"type:timestamptz;not null;default:now()"`
+}
+
+func (WebhookQueueModel) TableName() string {
+	return "operational.webhook_queue"
+}
+
+// Mappers for Analytics Worker
+
+func ToHourlyPlantStatsEntity(m *HourlyPlantStatsModel) *entities.HourlyPlantStats {
+	return &entities.HourlyPlantStats{
+		Bucket:           m.Bucket,
+		PlantSourceId:    m.PlantSourceId,
+		AvgPowerGen:      m.AvgPowerGen,
+		AvgPowerCon:      m.AvgPowerCon,
+		AvgEfficiency:    m.AvgEfficiency,
+		AvgTemp:          m.AvgTemp,
+		SampleCount:      m.SampleCount,
+		LastCalculatedAt: m.LastCalculatedAt,
+	}
+}
+
+func ToWebhookQueueEntity(m *WebhookQueueModel) *entities.WebhookQueueItem {
+	return &entities.WebhookQueueItem{
+		ID:            m.ID,
+		Bucket:        m.Bucket,
+		PlantSourceId: m.PlantSourceId,
+		Status:        entities.WebhookStatus(m.Status),
+		Attempts:      m.Attempts,
+		LastAttempt:   m.LastAttempt,
+		NextRetryAt:   m.NextRetryAt,
+		ErrorMessage:  m.ErrorMessage,
+		CreatedAt:     m.CreatedAt,
+	}
+}

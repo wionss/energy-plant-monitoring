@@ -30,6 +30,7 @@ type Container struct {
 	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface
 	DualEventWriter       output.DualEventWriterInterface
 	EnergyPlantRepository output.EnergyPlantRepositoryInterface
+	AnalyticsCoordinator  output.AnalyticsCoordinatorInterface
 	EventGenerator        *api.EventGenerator
 	TelegramNotifier      *telegram.Notifier
 }
@@ -84,6 +85,19 @@ func NewContainer(
 	webhookAdapter := webhook.NewAdapter(httpClient)
 	container.WebhookAdapter = webhookAdapter
 
+	// Initialize Analytics Coordinator
+	analyticsWorkerRepo := repositories.NewAnalyticsWorkerRepo(db)
+	analyticsCoordinator := repositories.NewAnalyticsCoordinator(
+		analyticsWorkerRepo,
+		webhookAdapter,
+		repositories.AnalyticsCoordinatorConfig{
+			WebhookURL:     container.cfg.WebhookUrl,
+			WebhookEnabled: container.cfg.WebhookEnabled,
+		},
+	)
+	container.AnalyticsCoordinator = analyticsCoordinator
+	go analyticsCoordinator.Start()
+
 	// Initialize Telegram notifier
 	telegramNotifier := telegram.NewNotifier(
 		container.cfg.TelegramBotToken,
@@ -125,15 +139,19 @@ func (c *Container) Shutdown() {
 	slog.Info("stopping event generator")
 	c.EventGenerator.Stop()
 
-	// 3. Stop dual event writer (drains async channel)
+	// 3. Stop analytics coordinator
+	slog.Info("stopping analytics coordinator")
+	c.AnalyticsCoordinator.Stop()
+
+	// 4. Stop dual event writer (drains async channel)
 	slog.Info("stopping dual event writer")
 	c.DualEventWriter.Stop()
 
-	// 4. Stop Telegram notifier (drains alert channel)
+	// 5. Stop Telegram notifier (drains alert channel)
 	slog.Info("stopping Telegram notifier")
 	c.TelegramNotifier.Stop()
 
-	// 5. Close database connection
+	// 6. Close database connection
 	slog.Info("closing database connection")
 	sqlDB, err := c.db.DB()
 	if err != nil {
