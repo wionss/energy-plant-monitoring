@@ -1,18 +1,27 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
 
 type WebhookPayload struct {
 	Bucket        time.Time `json:"bucket"`
 	PlantSourceId string    `json:"plant_source_id"`
+	PlantName     string    `json:"plant_name"`
+	PlantType     string    `json:"plant_type"`
+	Latitude      *float64  `json:"latitude"`
+	Longitude     *float64  `json:"longitude"`
 	AvgPowerGen   *float64  `json:"avg_power_gen"`
 	AvgPowerCon   *float64  `json:"avg_power_con"`
 	AvgEfficiency *float64  `json:"avg_efficiency"`
@@ -21,22 +30,63 @@ type WebhookPayload struct {
 	CalculatedAt  time.Time `json:"calculated_at"`
 }
 
+// Store para guardar los últimos webhooks recibidos por planta
+type WebhookStore struct {
+	mu    sync.RWMutex
+	data  map[string]WebhookPayload // key: plant_source_id
+	order []string                  // para mantener orden de llegada
+}
+
+var store = &WebhookStore{
+	data:  make(map[string]WebhookPayload),
+	order: make([]string, 0),
+}
+
+func (s *WebhookStore) Add(payload WebhookPayload) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Si es nueva planta, agregar al orden
+	if _, exists := s.data[payload.PlantSourceId]; !exists {
+		s.order = append(s.order, payload.PlantSourceId)
+	}
+	s.data[payload.PlantSourceId] = payload
+}
+
+func (s *WebhookStore) GetAll() []WebhookPayload {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]WebhookPayload, 0, len(s.data))
+	for _, id := range s.order {
+		if payload, exists := s.data[id]; exists {
+			result = append(result, payload)
+		}
+	}
+	return result
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "9999"
 	}
 
+	// API endpoints
 	http.HandleFunc("/webhook", handleWebhook)
 	http.HandleFunc("/health", handleHealth)
+	http.HandleFunc("/api/plants", handleGetPlants)
+
+	// Serve static files
+	http.HandleFunc("/", handleStatic)
 
 	fmt.Printf(`
 ╔════════════════════════════════════════════════════════════╗
-║           WEBHOOK RECEIVER - Local Testing                 ║
+║        WEBHOOK RECEIVER - Local Testing + Dashboard        ║
 ╠════════════════════════════════════════════════════════════╣
-║  Listening on: http://localhost:%s                       ║
+║  Dashboard:    http://localhost:%s                       ║
 ║  Webhook URL:  http://localhost:%s/webhook               ║
-║  Health:       http://localhost:%s/health                ║
+║  API Plants:   http://localhost:%s/api/plants            ║
 ╠════════════════════════════════════════════════════════════╣
 ║  Configura en .env:                                        ║
 ║    WEBHOOK_ENABLED=true                                    ║
@@ -49,6 +99,31 @@ func main() {
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func handleStatic(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if path == "/" {
+		path = "/index.html"
+	}
+
+	content, err := staticFiles.ReadFile("static" + path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Set content type
+	switch {
+	case len(path) > 5 && path[len(path)-5:] == ".html":
+		w.Header().Set("Content-Type", "text/html")
+	case len(path) > 3 && path[len(path)-3:] == ".js":
+		w.Header().Set("Content-Type", "application/javascript")
+	case len(path) > 4 && path[len(path)-4:] == ".css":
+		w.Header().Set("Content-Type", "text/css")
+	}
+
+	w.Write(content)
 }
 
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +146,9 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Guardar en store
+	store.Add(payload)
+
 	// Pretty print
 	prettyJSON, _ := json.MarshalIndent(payload, "  ", "  ")
 
@@ -78,14 +156,18 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 ┌──────────────────────────────────────────────────────────────
 │ 📥 WEBHOOK RECEIVED @ %s
 ├──────────────────────────────────────────────────────────────
-│ Bucket:        %s
-│ Plant ID:      %s
-│ Avg Power Gen: %s MW
-│ Avg Power Con: %s MW
+│ Bucket:         %s
+│ Plant ID:       %s
+│ Plant Name:     %s
+│ Plant Type:     %s
+│ Location:       %s, %s
+├──────────────────────────────────────────────────────────────
+│ Avg Power Gen:  %s MW
+│ Avg Power Con:  %s MW
 │ Avg Efficiency: %s %%
-│ Avg Temp:      %s °C
-│ Sample Count:  %d
-│ Calculated At: %s
+│ Avg Temp:       %s °C
+│ Sample Count:   %d
+│ Calculated At:  %s
 ├──────────────────────────────────────────────────────────────
 │ Raw JSON:
 %s
@@ -95,6 +177,10 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		time.Now().Format("2006-01-02 15:04:05"),
 		payload.Bucket.Format("2006-01-02 15:04"),
 		payload.PlantSourceId,
+		payload.PlantName,
+		payload.PlantType,
+		formatFloat(payload.Latitude),
+		formatFloat(payload.Longitude),
 		formatFloat(payload.AvgPowerGen),
 		formatFloat(payload.AvgPowerCon),
 		formatFloat(payload.AvgEfficiency),
@@ -115,6 +201,12 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func handleGetPlants(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(store.GetAll())
 }
 
 func formatFloat(f *float64) string {

@@ -18,8 +18,14 @@ const (
 
 // HourlyPlantStats represents pre-calculated hourly statistics for a plant
 type HourlyPlantStats struct {
-	Bucket           time.Time
-	PlantSourceId    uuid.UUID
+	Bucket        time.Time
+	PlantSourceId uuid.UUID
+	// Campos desnormalizados de master.energy_plants
+	PlantName string
+	PlantType string
+	Latitude  *float64
+	Longitude *float64
+	// Métricas calculadas
 	AvgPowerGen      *float64
 	AvgPowerCon      *float64
 	AvgEfficiency    *float64

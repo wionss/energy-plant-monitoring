@@ -46,6 +46,12 @@ calculated_stats AS (
     SELECT
         time_bucket('1 hour', e.created_at) AS bucket,
         e.plant_source_id,
+        -- Datos desnormalizados de master.energy_plants
+        ep.plant_name,
+        ep.plant_type,
+        ep.latitude,
+        ep.longitude,
+        -- Métricas calculadas
         AVG((e.data::jsonb->>'power_generated_mw')::double precision) AS avg_power_gen,
         AVG((e.data::jsonb->>'power_consumed_mw')::double precision) AS avg_power_con,
         AVG((e.data::jsonb->>'efficiency_percent')::double precision) AS avg_efficiency,
@@ -55,14 +61,20 @@ calculated_stats AS (
     INNER JOIN dirty_buckets db
         ON time_bucket('1 hour', e.created_at) = db.bucket
         AND e.plant_source_id = db.plant_source_id
-    GROUP BY 1, 2
+    LEFT JOIN master.energy_plants ep
+        ON e.plant_source_id = ep.id
+    GROUP BY 1, 2, ep.plant_name, ep.plant_type, ep.latitude, ep.longitude
 ),
 upserted AS (
     INSERT INTO analytical.hourly_plant_stats
-        (bucket, plant_source_id, avg_power_gen, avg_power_con, avg_efficiency, avg_temp, sample_count, last_calculated_at)
-    SELECT bucket, plant_source_id, avg_power_gen, avg_power_con, avg_efficiency, avg_temp, sample_count, NOW()
+        (bucket, plant_source_id, plant_name, plant_type, latitude, longitude, avg_power_gen, avg_power_con, avg_efficiency, avg_temp, sample_count, last_calculated_at)
+    SELECT bucket, plant_source_id, plant_name, plant_type, latitude, longitude, avg_power_gen, avg_power_con, avg_efficiency, avg_temp, sample_count, NOW()
     FROM calculated_stats
     ON CONFLICT (bucket, plant_source_id) DO UPDATE SET
+        plant_name = EXCLUDED.plant_name,
+        plant_type = EXCLUDED.plant_type,
+        latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude,
         avg_power_gen = EXCLUDED.avg_power_gen,
         avg_power_con = EXCLUDED.avg_power_con,
         avg_efficiency = EXCLUDED.avg_efficiency,

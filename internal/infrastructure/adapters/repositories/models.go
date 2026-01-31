@@ -50,7 +50,10 @@ func (EventAnalyticalModel) TableName() string {
 type EnergyPlantsModel struct {
 	ID         uuid.UUID      `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
 	PlantName  string         `gorm:"type:varchar(255);not null"`
+	PlantType  string         `gorm:"type:varchar(50);default:'solar'"`
 	Location   string         `gorm:"type:varchar(255)"`
+	Latitude   *float64       `gorm:"type:double precision"`
+	Longitude  *float64       `gorm:"type:double precision"`
 	CapacityMW float64        `gorm:"type:float"`
 	CreatedAt  time.Time      `gorm:"autoCreateTime"`
 	UpdatedAt  time.Time      `gorm:"autoUpdateTime"`
@@ -133,7 +136,10 @@ func ToEnergyPlantsModel(e *entities.EnergyPlants) *EnergyPlantsModel {
 	return &EnergyPlantsModel{
 		ID:         e.ID,
 		PlantName:  e.PlantName,
+		PlantType:  e.PlantType,
 		Location:   e.Location,
+		Latitude:   e.Latitude,
+		Longitude:  e.Longitude,
 		CapacityMW: e.CapacityMW,
 		CreatedAt:  e.CreatedAt,
 		UpdatedAt:  e.UpdatedAt,
@@ -144,7 +150,10 @@ func ToEnergyPlantsEntity(m *EnergyPlantsModel) *entities.EnergyPlants {
 	return &entities.EnergyPlants{
 		ID:         m.ID,
 		PlantName:  m.PlantName,
+		PlantType:  m.PlantType,
 		Location:   m.Location,
+		Latitude:   m.Latitude,
+		Longitude:  m.Longitude,
 		CapacityMW: m.CapacityMW,
 		CreatedAt:  m.CreatedAt,
 		UpdatedAt:  m.UpdatedAt,
@@ -214,8 +223,14 @@ func ToExampleEntity(m *ExampleModel) *entities.ExampleEntity {
 
 // HourlyPlantStatsModel - estadísticas horarias pre-calculadas
 type HourlyPlantStatsModel struct {
-	Bucket           time.Time `gorm:"type:timestamptz;primaryKey"`
-	PlantSourceId    uuid.UUID `gorm:"type:uuid;primaryKey"`
+	Bucket        time.Time `gorm:"type:timestamptz;primaryKey"`
+	PlantSourceId uuid.UUID `gorm:"type:uuid;primaryKey"`
+	// Campos desnormalizados de master.energy_plants
+	PlantName string   `gorm:"type:varchar(255)"`
+	PlantType string   `gorm:"type:varchar(50);index:idx_hps_plant_type"`
+	Latitude  *float64 `gorm:"type:double precision"`
+	Longitude *float64 `gorm:"type:double precision"`
+	// Métricas calculadas
 	AvgPowerGen      *float64  `gorm:"type:double precision"`
 	AvgPowerCon      *float64  `gorm:"type:double precision"`
 	AvgEfficiency    *float64  `gorm:"type:double precision"`
@@ -251,6 +266,10 @@ func ToHourlyPlantStatsEntity(m *HourlyPlantStatsModel) *entities.HourlyPlantSta
 	return &entities.HourlyPlantStats{
 		Bucket:           m.Bucket,
 		PlantSourceId:    m.PlantSourceId,
+		PlantName:        m.PlantName,
+		PlantType:        m.PlantType,
+		Latitude:         m.Latitude,
+		Longitude:        m.Longitude,
 		AvgPowerGen:      m.AvgPowerGen,
 		AvgPowerCon:      m.AvgPowerCon,
 		AvgEfficiency:    m.AvgEfficiency,

@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: dev dev-modd docker-up docker-down migrate-create goose-up goose-down goose-down-to goose-status hash install-dev-tools build run test swagger install-swagger webhook-receiver
+.PHONY: dev dev-modd docker-up docker-down migrate-create goose-up goose-down goose-down-to goose-status hash install-dev-tools build run test swagger install-swagger webhook-receiver devfront send-events
 
 # Development
 dev:
@@ -57,12 +57,17 @@ hash:
 console-kafka:
 	docker exec -it monitoring-energy-kafka /bin/bash
 
-# Webhook testing
+# Webhook testing / Frontend dashboard
 webhook-receiver:
 	go run ./cmd/webhook-receiver
 
-webhock-run:
-  PORT=9091 go run ./cmd/webhook-receiver
+devfront:
+	PORT=9091 go run ./cmd/webhook-receiver
+
+# Event sender for testing (Python - 1 event/sec per plant)
+send-events:
+	python3 script/realtime-sender.py
+
 # Dev Tools Installation
 install-dev-tools:
 	go install github.com/air-verse/air@latest

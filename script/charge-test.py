@@ -73,8 +73,8 @@ def produce_load(producer, num_events):
 
 def main():
     parser = argparse.ArgumentParser(description="Backfill Generator")
-    parser.add_argument("--events", type=int, default=100000, help="Total de eventos")
-    parser.add_argument("--workers", type=int, default=8, help="Hilos paralelos")
+    parser.add_argument("--events", type=int, default=500000, help="Total de eventos")
+    parser.add_argument("--workers", type=int, default=10, help="Hilos paralelos")
     args = parser.parse_args()
 
     conf = {

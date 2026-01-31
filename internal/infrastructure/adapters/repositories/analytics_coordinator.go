@@ -229,14 +229,18 @@ func (c *AnalyticsCoordinator) doDispatch() {
 
 		// Build payload
 		payload := map[string]any{
-			"bucket":           stats.Bucket,
-			"plant_source_id":  stats.PlantSourceId,
-			"avg_power_gen":    stats.AvgPowerGen,
-			"avg_power_con":    stats.AvgPowerCon,
-			"avg_efficiency":   stats.AvgEfficiency,
-			"avg_temp":         stats.AvgTemp,
-			"sample_count":     stats.SampleCount,
-			"calculated_at":    stats.LastCalculatedAt,
+			"bucket":          stats.Bucket,
+			"plant_source_id": stats.PlantSourceId,
+			"plant_name":      stats.PlantName,
+			"plant_type":      stats.PlantType,
+			"latitude":        stats.Latitude,
+			"longitude":       stats.Longitude,
+			"avg_power_gen":   stats.AvgPowerGen,
+			"avg_power_con":   stats.AvgPowerCon,
+			"avg_efficiency":  stats.AvgEfficiency,
+			"avg_temp":        stats.AvgTemp,
+			"sample_count":    stats.SampleCount,
+			"calculated_at":   stats.LastCalculatedAt,
 		}
 
 		// Send webhook
