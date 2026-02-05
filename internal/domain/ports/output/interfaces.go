@@ -106,3 +106,11 @@ type AnalyticsCoordinatorInterface interface {
 	Start()
 	Stop()
 }
+
+// PlantStatusRepositoryInterface - contrato para el Digital Twin de estado de plantas
+type PlantStatusRepositoryInterface interface {
+	Upsert(status *entities.PlantCurrentStatus) error
+	GetByPlantID(plantID uuid.UUID) (*entities.PlantCurrentStatus, error)
+	GetAll() ([]*entities.PlantCurrentStatus, error)
+	GetByStatus(status string) ([]*entities.PlantCurrentStatus, error)
+}

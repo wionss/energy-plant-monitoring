@@ -30,6 +30,7 @@ type Container struct {
 	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface
 	DualEventWriter       output.DualEventWriterInterface
 	EnergyPlantRepository output.EnergyPlantRepositoryInterface
+	PlantStatusRepository output.PlantStatusRepositoryInterface
 	AnalyticsCoordinator  output.AnalyticsCoordinatorInterface
 	EventGenerator        *api.EventGenerator
 	TelegramNotifier      *telegram.Notifier
@@ -58,6 +59,9 @@ func NewContainer(
 
 	energyPlantRepository := repositories.NewEnergyPlantRepository(db)
 	container.EnergyPlantRepository = energyPlantRepository
+
+	plantStatusRepository := repositories.NewPlantStatusRepository(db)
+	container.PlantStatusRepository = plantStatusRepository
 
 	eventOpRepo := repositories.NewEventOperationalRepository(db)
 	container.EventOperationalRepo = eventOpRepo
@@ -107,7 +111,7 @@ func NewContainer(
 	container.TelegramNotifier = telegramNotifier
 
 	// Register Kafka handlers
-	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, telegramNotifier, true)
+	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, plantStatusRepository, telegramNotifier, true)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
 	// Initialize Event Generator

@@ -41,9 +41,13 @@ func NewEventGenerator(kafkaService input.KafkaServiceInterface, topic string) *
 func (eg *EventGenerator) Start() {
 	slog.Info("starting event generator", "interval", "60m", "batch_size", 30)
 
+	// Wait for Kafka consumer to subscribe before sending initial batch
+	slog.Info("waiting for Kafka consumer to be ready", "delay", "5s")
+	time.Sleep(15 * time.Second)
+
 	eg.generateAndSendEvents()
 
-	ticker := time.NewTicker(60 * time.Minute)
+	ticker := time.NewTicker(3 * time.Minute)
 	defer ticker.Stop()
 
 	for {

@@ -12,6 +12,7 @@ import (
 	domainerrors "monitoring-energy-service/internal/domain/errors"
 	"monitoring-energy-service/internal/domain/ports/input"
 	"monitoring-energy-service/internal/domain/ports/output"
+	"monitoring-energy-service/internal/infrastructure/adapters/metrics"
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ import (
 type IntakeHandler struct {
 	dualWriter            output.DualEventWriterInterface
 	energyPlantRepository output.EnergyPlantRepositoryInterface
+	plantStatusRepository output.PlantStatusRepositoryInterface
 	telegramNotifier      *telegram.Notifier
 	useAsyncWrite         bool
 }
@@ -30,12 +32,14 @@ var _ input.MessageHandler = &IntakeHandler{}
 func NewIntakeHandler(
 	dualWriter output.DualEventWriterInterface,
 	energyPlantRepository output.EnergyPlantRepositoryInterface,
+	plantStatusRepository output.PlantStatusRepositoryInterface,
 	telegramNotifier *telegram.Notifier,
 	useAsyncWrite bool,
 ) *IntakeHandler {
 	return &IntakeHandler{
 		dualWriter:            dualWriter,
 		energyPlantRepository: energyPlantRepository,
+		plantStatusRepository: plantStatusRepository,
 		telegramNotifier:      telegramNotifier,
 		useAsyncWrite:         useAsyncWrite,
 	}
@@ -50,6 +54,7 @@ func deterministicID(payload []byte) uuid.UUID {
 }
 
 func (h *IntakeHandler) HandleMessage(message []byte) error {
+	startTime := time.Now()
 	hash := sha256.Sum256(message)
 	hashHex := hex.EncodeToString(hash[:])
 
@@ -72,6 +77,7 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 	var data map[string]interface{}
 	if err := json.Unmarshal(message, &data); err != nil {
 		slog.Error("invalid JSON message", "error", err)
+		metrics.EventsValidationErrors.WithLabelValues("invalid_json").Inc()
 		return domainerrors.NewPermanentError("invalid JSON", err)
 	}
 
@@ -151,6 +157,24 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 
 	slog.Info("plant validated", "plant_source_id", plantSourceId)
 
+	// Validate event data fields
+	var eventData entities.EventData
+	if err := json.Unmarshal(message, &eventData); err == nil {
+		if err := eventData.Validate(); err != nil {
+			slog.Error("event data validation failed",
+				"plant_source_id", plantSourceId,
+				"event_type", eventType,
+				"error", err,
+			)
+			h.telegramNotifier.SendValidationError(
+				"event_data",
+				"validation failed",
+				fmt.Sprintf("Validation error for plant %s: %v", plantSourceId, err),
+			)
+			return domainerrors.NewPermanentError("event data validation failed", err)
+		}
+	}
+
 	// Use raw JSON bytes directly (no re-marshal to string)
 	dataJSON := json.RawMessage(message)
 
@@ -199,6 +223,43 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 		}
 		slog.Info("event saved to both tables", "id", eventId, "type", eventType)
 	}
+
+	// Update Digital Twin: plant current status
+	if h.plantStatusRepository != nil {
+		// Extract current_status from payload if present, default to "ACTIVE"
+		currentStatus := "ACTIVE"
+		if status, ok := data["current_status"].(string); ok && status != "" {
+			currentStatus = status
+		}
+
+		plantStatus := &entities.PlantCurrentStatus{
+			PlantID:       plantSourceId,
+			LastEventData: dataJSON,
+			CurrentStatus: currentStatus,
+			LastEventType: eventType,
+			LastEventAt:   now,
+			UpdatedAt:     now,
+		}
+
+		if err := h.plantStatusRepository.Upsert(plantStatus); err != nil {
+			slog.Error("failed to update plant current status",
+				"plant_source_id", plantSourceId,
+				"error", err,
+			)
+			// Non-blocking: log error but don't fail the message processing
+		} else {
+			slog.Debug("plant current status updated",
+				"plant_source_id", plantSourceId,
+				"current_status", currentStatus,
+			)
+			// Track plant status update metric
+			metrics.PlantStatusUpdates.WithLabelValues(plantSourceId.String(), currentStatus).Inc()
+		}
+	}
+
+	// Track successful event ingestion metrics
+	metrics.EventsIngestedTotal.WithLabelValues(eventType, plantSourceId.String(), "success").Inc()
+	metrics.EventProcessingDuration.WithLabelValues(eventType).Observe(time.Since(startTime).Seconds())
 
 	return nil
 }

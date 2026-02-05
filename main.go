@@ -20,6 +20,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -154,6 +155,9 @@ func main() {
 
 	router.GET("/healthz", gin.WrapF(HealthCheck))
 	router.GET("/readyz", gin.WrapF(HealthCheck))
+
+	// Prometheus metrics endpoint
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	if environment == "dev" {
 		slog.Info("running in development mode",

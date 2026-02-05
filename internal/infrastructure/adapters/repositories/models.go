@@ -292,3 +292,45 @@ func ToWebhookQueueEntity(m *WebhookQueueModel) *entities.WebhookQueueItem {
 		CreatedAt:     m.CreatedAt,
 	}
 }
+
+// ============================================================================
+// Digital Twin: Plant Current Status
+// ============================================================================
+
+// PlantCurrentStatusModel - real-time plant status (Digital Twin)
+type PlantCurrentStatusModel struct {
+	PlantID       uuid.UUID      `gorm:"type:uuid;primaryKey"`
+	LastEventData datatypes.JSON `gorm:"type:jsonb;not null"`
+	CurrentStatus string         `gorm:"type:varchar(50);not null;default:'UNKNOWN';index:idx_pcs_status"`
+	LastEventType string         `gorm:"type:varchar(100)"`
+	LastEventAt   time.Time      `gorm:"type:timestamptz;not null"`
+	UpdatedAt     time.Time      `gorm:"type:timestamptz;not null;default:now();index:idx_pcs_updated_at"`
+}
+
+func (PlantCurrentStatusModel) TableName() string {
+	return "master.plant_current_status"
+}
+
+// Mappers for PlantCurrentStatus
+
+func ToPlantCurrentStatusEntity(m *PlantCurrentStatusModel) *entities.PlantCurrentStatus {
+	return &entities.PlantCurrentStatus{
+		PlantID:       m.PlantID,
+		LastEventData: json.RawMessage(m.LastEventData),
+		CurrentStatus: m.CurrentStatus,
+		LastEventType: m.LastEventType,
+		LastEventAt:   m.LastEventAt,
+		UpdatedAt:     m.UpdatedAt,
+	}
+}
+
+func ToPlantCurrentStatusModel(e *entities.PlantCurrentStatus) *PlantCurrentStatusModel {
+	return &PlantCurrentStatusModel{
+		PlantID:       e.PlantID,
+		LastEventData: datatypes.JSON(e.LastEventData),
+		CurrentStatus: e.CurrentStatus,
+		LastEventType: e.LastEventType,
+		LastEventAt:   e.LastEventAt,
+		UpdatedAt:     e.UpdatedAt,
+	}
+}

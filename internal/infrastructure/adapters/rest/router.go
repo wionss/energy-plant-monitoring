@@ -52,6 +52,14 @@ func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
 			}
 		}
 
+		// Digital Twin: Real-time plant status endpoints
+		plants := api.Group("/plants")
+		{
+			plants.GET("/status", ListPlantStatus(c))                   // GET /api/v1/plants/status - All plant statuses
+			plants.GET("/status/:id", GetPlantStatus(c))                // GET /api/v1/plants/status/:id - Specific plant status
+			plants.GET("/status/filter/:status", ListPlantStatusByStatus(c)) // GET /api/v1/plants/status/filter/:status - Filter by status
+		}
+
 		// CAMBIO: Agregado grupo de endpoints para pruebas
 		// RAZÓN: Permite probar validaciones y notificaciones de Telegram via Swagger
 		test := api.Group("/test")
