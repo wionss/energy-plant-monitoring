@@ -32,7 +32,6 @@ type Container struct {
 	EnergyPlantRepository output.EnergyPlantRepositoryInterface
 	PlantStatusRepository output.PlantStatusRepositoryInterface
 	AnalyticsCoordinator  output.AnalyticsCoordinatorInterface
-	EventGenerator        *api.EventGenerator
 	TelegramNotifier      *telegram.Notifier
 }
 
@@ -114,10 +113,6 @@ func NewContainer(
 	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, plantStatusRepository, telegramNotifier, true)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
-	// Initialize Event Generator
-	eventGenerator := api.NewEventGenerator(kafkaService, "intake")
-	container.EventGenerator = eventGenerator
-
 	return container
 }
 
@@ -139,23 +134,19 @@ func (c *Container) Shutdown() {
 	slog.Info("stopping Kafka consumer")
 	c.KafkaService.StopConsuming()
 
-	// 2. Stop event generator
-	slog.Info("stopping event generator")
-	c.EventGenerator.Stop()
-
-	// 3. Stop analytics coordinator
+	// 2. Stop analytics coordinator
 	slog.Info("stopping analytics coordinator")
 	c.AnalyticsCoordinator.Stop()
 
-	// 4. Stop dual event writer (drains async channel)
+	// 3. Stop dual event writer (drains async channel)
 	slog.Info("stopping dual event writer")
 	c.DualEventWriter.Stop()
 
-	// 5. Stop Telegram notifier (drains alert channel)
+	// 4. Stop Telegram notifier (drains alert channel)
 	slog.Info("stopping Telegram notifier")
 	c.TelegramNotifier.Stop()
 
-	// 6. Close database connection
+	// 5. Close database connection
 	slog.Info("closing database connection")
 	sqlDB, err := c.db.DB()
 	if err != nil {

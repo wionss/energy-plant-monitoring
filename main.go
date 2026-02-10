@@ -108,9 +108,6 @@ func main() {
 	// Start Kafka consumer in background
 	go c.KafkaService.ConsumeEvents()
 
-	// Start Event Generator in background
-	go c.EventGenerator.Start()
-
 	router := gin.New()
 	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		SkipPaths: []string{"/healthz", "/readyz", "/swagger/*any"},
