@@ -2,13 +2,12 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
-	"monitoring-energy-service/internal/domain/entities"
+	"monitoring-energy-service/internal/infrastructure/adapters/repositories"
 	"monitoring-energy-service/internal/infrastructure/conf"
 
 	"github.com/pressly/goose/v3"
@@ -25,14 +24,12 @@ func SetupDatabasePsql() (*gorm.DB, error) {
 	DBuri := conf.DBUriPsql(dbSetting)
 	db, err := gorm.Open(postgres.Open(DBuri), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("Unable to connect to database: %v\n", err)
-		return nil, err
+		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("Unable to set in database MaxIdleConns and MaxOpenConns, error: %v\n", err)
-		return nil, err
+		return nil, fmt.Errorf("unable to get underlying sql.DB: %w", err)
 	}
 
 	sqlDB.SetMaxIdleConns(dbSetting.DbMaxIdleConns)
@@ -65,7 +62,7 @@ func PerformMigrations(db *gorm.DB) error {
 	}
 
 	if migrationsDir == "" {
-		slog.Warn("No migrations directory found, skipping migrations")
+		slog.Warn("no migrations directory found, skipping migrations")
 		return nil
 	}
 
@@ -78,7 +75,7 @@ func PerformMigrations(db *gorm.DB) error {
 		return fmt.Errorf("error setting dialect for goose: %w", err)
 	}
 
-	slog.Info("Running database migrations", "directory", migrationsDir)
+	slog.Info("running database migrations", "directory", migrationsDir)
 	if err := goose.Up(sqlDB, migrationsDir); err != nil {
 		return fmt.Errorf("error running migrations: %w in directory %s", err, migrationsDir)
 	}
@@ -110,8 +107,7 @@ func SeedDB(db *gorm.DB, directory string) error {
 		name   string
 		entity interface{}
 	}{
-
-		{"energy_plants", &entities.EnergyPlants{}},
+		{"energy_plants", &repositories.EnergyPlantsModel{}},
 	}
 
 	for _, item := range entitiesFile {
@@ -119,7 +115,7 @@ func SeedDB(db *gorm.DB, directory string) error {
 		entity := item.entity
 		var count int64
 		if db.Model(entity).Count(&count); count == 0 {
-			log.Printf("Seeding model <%s>", name)
+			slog.Info("seeding model", "model", name)
 			err := seedData(db, directory, name)
 			if err != nil {
 				return err

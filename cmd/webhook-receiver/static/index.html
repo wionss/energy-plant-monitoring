@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Energy Plants Monitor</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }
+
+        .header {
+            background: #16213e;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            color: #4ecca3;
+        }
+
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4ecca3;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+
+        .sidebar {
+            width: 350px;
+            background: #16213e;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .sidebar h2 {
+            color: #4ecca3;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+
+        .plant-card {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border-left: 4px solid #4ecca3;
+        }
+
+        .plant-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 15px rgba(78, 204, 163, 0.2);
+        }
+
+        .plant-card.solar { border-left-color: #ffd700; }
+        .plant-card.wind { border-left-color: #00bfff; }
+        .plant-card.hydro { border-left-color: #1e90ff; }
+
+        .plant-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .plant-card .type {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: #888;
+            margin-bottom: 0.5rem;
+        }
+
+        .plant-card .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+        }
+
+        .plant-card .stat {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .plant-card .stat-label {
+            color: #888;
+            font-size: 0.7rem;
+        }
+
+        .plant-card .stat-value {
+            color: #4ecca3;
+            font-weight: bold;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .modal-close:hover {
+            color: #fff;
+        }
+
+        .modal h2 {
+            color: #4ecca3;
+            margin-bottom: 0.5rem;
+        }
+
+        .modal .plant-type {
+            color: #888;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .modal-stat {
+            background: #1a1a2e;
+            padding: 1rem;
+            border-radius: 8px;
+        }
+
+        .modal-stat .label {
+            color: #888;
+            font-size: 0.8rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .modal-stat .value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #4ecca3;
+        }
+
+        .modal-stat .unit {
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .modal-location {
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid #333;
+        }
+
+        .modal-location h4 {
+            color: #888;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .modal-location p {
+            font-size: 0.9rem;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 2rem;
+            color: #888;
+        }
+
+        .no-data p {
+            margin-bottom: 1rem;
+        }
+
+        /* Custom markers */
+        .custom-marker {
+            background: #4ecca3;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .custom-marker.solar { background: #ffd700; }
+        .custom-marker.wind { background: #00bfff; }
+        .custom-marker.hydro { background: #1e90ff; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>⚡ Energy Plants Monitor</h1>
+        <div class="status">
+            <div class="status-dot"></div>
+            <span>Listening for webhooks...</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <div id="map"></div>
+        <div class="sidebar">
+            <h2>📊 Plants Overview</h2>
+            <div id="plants-list">
+                <div class="no-data">
+                    <p>No data received yet</p>
+                    <small>Waiting for webhooks...</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal-overlay" id="modal">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <h2 id="modal-name">Plant Name</h2>
+            <div class="plant-type" id="modal-type">solar</div>
+
+            <div class="modal-stats">
+                <div class="modal-stat">
+                    <div class="label">Power Generated</div>
+                    <div class="value" id="modal-power-gen">0</div>
+                    <div class="unit">MW</div>
+                </div>
+                <div class="modal-stat">
+                    <div class="label">Power Consumed</div>
+                    <div class="value" id="modal-power-con">0</div>
+                    <div class="unit">MW</div>
+                </div>
+                <div class="modal-stat">
+                    <div class="label">Efficiency</div>
+                    <div class="value" id="modal-efficiency">0</div>
+                    <div class="unit">%</div>
+                </div>
+                <div class="modal-stat">
+                    <div class="label">Temperature</div>
+                    <div class="value" id="modal-temp">0</div>
+                    <div class="unit">°C</div>
+                </div>
+            </div>
+
+            <div class="modal-stats" style="margin-top: 1rem;">
+                <div class="modal-stat">
+                    <div class="label">Sample Count</div>
+                    <div class="value" id="modal-samples">0</div>
+                    <div class="unit">readings</div>
+                </div>
+                <div class="modal-stat">
+                    <div class="label">Bucket Time</div>
+                    <div class="value" id="modal-bucket" style="font-size: 1rem;">-</div>
+                    <div class="unit">hour</div>
+                </div>
+            </div>
+
+            <div class="modal-location">
+                <h4>📍 Location</h4>
+                <p id="modal-coords">Lat: 0, Lng: 0</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map centered on Colombia
+        const map = L.map('map').setView([4.5, -74.0], 6);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+            maxZoom: 19
+        }).addTo(map);
+
+        const markers = {};
+        let plants = [];
+
+        // Fetch plants data
+        async function fetchPlants() {
+            try {
+                const response = await fetch('/api/plants');
+                plants = await response.json();
+                updateUI();
+            } catch (error) {
+                console.error('Error fetching plants:', error);
+            }
+        }
+
+        function updateUI() {
+            updateSidebar();
+            updateMarkers();
+        }
+
+        function updateSidebar() {
+            const container = document.getElementById('plants-list');
+
+            if (plants.length === 0) {
+                container.innerHTML = `
+                    <div class="no-data">
+                        <p>No data received yet</p>
+                        <small>Waiting for webhooks...</small>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = plants.map(plant => `
+                <div class="plant-card ${plant.plant_type}" onclick="showModal('${plant.plant_source_id}')">
+                    <h3>${plant.plant_name || 'Unknown'}</h3>
+                    <div class="type">${getTypeIcon(plant.plant_type)} ${plant.plant_type || 'unknown'}</div>
+                    <div class="stats">
+                        <div class="stat">
+                            <span class="stat-label">Power Gen</span>
+                            <span class="stat-value">${formatNumber(plant.avg_power_gen)} MW</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Efficiency</span>
+                            <span class="stat-value">${formatNumber(plant.avg_efficiency)}%</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Temperature</span>
+                            <span class="stat-value">${formatNumber(plant.avg_temp)}°C</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Samples</span>
+                            <span class="stat-value">${plant.sample_count?.toLocaleString() || 0}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateMarkers() {
+            plants.forEach(plant => {
+                if (!plant.latitude || !plant.longitude) return;
+
+                const id = plant.plant_source_id;
+
+                if (markers[id]) {
+                    markers[id].setLatLng([plant.latitude, plant.longitude]);
+                } else {
+                    const icon = L.divIcon({
+                        className: `custom-marker ${plant.plant_type}`,
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10]
+                    });
+
+                    markers[id] = L.marker([plant.latitude, plant.longitude], { icon })
+                        .addTo(map)
+                        .bindPopup(`<b>${plant.plant_name}</b><br>${plant.plant_type}`)
+                        .on('click', () => showModal(id));
+                }
+            });
+
+            // Fit bounds if we have markers
+            if (plants.length > 0) {
+                const validPlants = plants.filter(p => p.latitude && p.longitude);
+                if (validPlants.length > 0) {
+                    const bounds = validPlants.map(p => [p.latitude, p.longitude]);
+                    map.fitBounds(bounds, { padding: [50, 50] });
+                }
+            }
+        }
+
+        function showModal(plantId) {
+            const plant = plants.find(p => p.plant_source_id === plantId);
+            if (!plant) return;
+
+            document.getElementById('modal-name').textContent = plant.plant_name || 'Unknown';
+            document.getElementById('modal-type').textContent = `${getTypeIcon(plant.plant_type)} ${plant.plant_type || 'unknown'}`;
+            document.getElementById('modal-power-gen').textContent = formatNumber(plant.avg_power_gen);
+            document.getElementById('modal-power-con').textContent = formatNumber(plant.avg_power_con);
+            document.getElementById('modal-efficiency').textContent = formatNumber(plant.avg_efficiency);
+            document.getElementById('modal-temp').textContent = formatNumber(plant.avg_temp);
+            document.getElementById('modal-samples').textContent = plant.sample_count?.toLocaleString() || '0';
+            document.getElementById('modal-bucket').textContent = formatDate(plant.bucket);
+            document.getElementById('modal-coords').textContent = `Lat: ${plant.latitude?.toFixed(4) || 'N/A'}, Lng: ${plant.longitude?.toFixed(4) || 'N/A'}`;
+
+            document.getElementById('modal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+
+        function getTypeIcon(type) {
+            const icons = {
+                solar: '☀️',
+                wind: '💨',
+                hydro: '💧'
+            };
+            return icons[type] || '⚡';
+        }
+
+        function formatNumber(num) {
+            if (num === null || num === undefined) return 'N/A';
+            return num.toFixed(2);
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        // Close modal on overlay click
+        document.getElementById('modal').addEventListener('click', (e) => {
+            if (e.target.id === 'modal') closeModal();
+        });
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        // Initial fetch and polling
+        fetchPlants();
+        setInterval(fetchPlants, 5000); // Poll every 5 seconds
+    </script>
+</body>
+</html>

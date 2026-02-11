@@ -1,6 +1,8 @@
 package output
 
 import (
+	"time"
+
 	"monitoring-energy-service/internal/domain/entities"
 
 	"github.com/google/uuid"
@@ -56,4 +58,59 @@ type EventRepositoryInterface interface {
 type EnergyPlantRepositoryInterface interface {
 	FindByID(id uuid.UUID) (*entities.EnergyPlants, error)
 	Exists(id uuid.UUID) (bool, error)
+}
+
+// EventOperationalRepositoryInterface define el contrato para datos operacionales (calientes)
+// Esquema: operational.events_std
+type EventOperationalRepositoryInterface interface {
+	Create(entity *entities.EventOperational) (*entities.EventOperational, error)
+	FindAll() ([]*entities.EventOperational, error)
+	FindByID(id uuid.UUID) (*entities.EventOperational, error)
+	FindByEventType(eventType string) ([]*entities.EventOperational, error)
+}
+
+// EventAnalyticalRepositoryInterface define el contrato para datos analíticos (fríos)
+// Esquema: analytical.events_ts (TimescaleDB hypertable)
+type EventAnalyticalRepositoryInterface interface {
+	Create(entity *entities.EventAnalytical) (*entities.EventAnalytical, error)
+	FindByTimeRange(start, end time.Time) ([]*entities.EventAnalytical, error)
+	GetHourlyAggregation(plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
+	GetDailyAggregation(plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
+}
+
+// DualEventWriterInterface define el contrato para escritura dual a ambas tablas
+type DualEventWriterInterface interface {
+	SaveEvent(op *entities.EventOperational, an *entities.EventAnalytical) error
+	SaveEventAsync(op *entities.EventOperational, an *entities.EventAnalytical) error
+	Stop()
+}
+
+// AggregatedEvent representa datos agregados de TimescaleDB time_bucket
+type AggregatedEvent struct {
+	Bucket        time.Time `json:"bucket"`
+	PlantSourceId uuid.UUID `json:"plant_source_id"`
+	EventType     string    `json:"event_type"`
+	EventCount    int64     `json:"event_count"`
+}
+
+// AnalyticsWorkerRepoInterface - contrato para agregaciones del worker de analytics
+type AnalyticsWorkerRepoInterface interface {
+	RecalculateDirtyBuckets(lookbackWindow time.Duration) (int, error)
+	GetPendingWebhooks(limit int) ([]*entities.WebhookQueueItem, error)
+	UpdateWebhookStatus(id uuid.UUID, status entities.WebhookStatus, errorMsg string) error
+	GetHourlyStats(bucket time.Time, plantId uuid.UUID) (*entities.HourlyPlantStats, error)
+}
+
+// AnalyticsCoordinatorInterface - contrato para el worker de analytics
+type AnalyticsCoordinatorInterface interface {
+	Start()
+	Stop()
+}
+
+// PlantStatusRepositoryInterface - contrato para el Digital Twin de estado de plantas
+type PlantStatusRepositoryInterface interface {
+	Upsert(status *entities.PlantCurrentStatus) error
+	GetByPlantID(plantID uuid.UUID) (*entities.PlantCurrentStatus, error)
+	GetAll() ([]*entities.PlantCurrentStatus, error)
+	GetByStatus(status string) ([]*entities.PlantCurrentStatus, error)
 }

@@ -1,0 +1,139 @@
+{
+	"info": {
+		"_postman_id": "analytics-webhook-collection",
+		"name": "Analytics Webhook - Monitoring Energy",
+		"description": "Collection para probar el webhook de analytics del servicio de monitoreo de energía.\n\n## Configuración\n\n1. Configura la variable `WEBHOOK_URL` en tu `.env` apuntando a tu servidor receptor\n2. O usa https://webhook.site para pruebas rápidas\n\n## Payload del Webhook\n\nEl servicio envía estadísticas horarias pre-calculadas por planta.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "webhookReceiverUrl",
+			"value": "http://localhost:9999/webhook",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Webhook Receiver",
+			"item": [
+				{
+					"name": "Mock Webhook Receiver",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"bucket\": \"2026-01-31T10:00:00Z\",\n    \"plant_source_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n    \"avg_power_gen\": 125.5,\n    \"avg_power_con\": 45.2,\n    \"avg_efficiency\": 87.3,\n    \"avg_temp\": 42.1,\n    \"sample_count\": 60,\n    \"calculated_at\": \"2026-01-31T10:05:00Z\"\n}"
+						},
+						"url": {
+							"raw": "{{webhookReceiverUrl}}",
+							"host": [
+								"{{webhookReceiverUrl}}"
+							]
+						},
+						"description": "Simula el payload que el AnalyticsCoordinator envía al webhook configurado.\n\n## Campos del Payload\n\n| Campo | Tipo | Descripción |\n|-------|------|-------------|\n| bucket | timestamp | Hora del bucket (truncada a la hora) |\n| plant_source_id | uuid | ID de la planta |\n| avg_power_gen | float | Promedio de potencia generada (MW) |\n| avg_power_con | float | Promedio de potencia consumida (MW) |\n| avg_efficiency | float | Promedio de eficiencia (%) |\n| avg_temp | float | Promedio de temperatura (°C) |\n| sample_count | int | Cantidad de muestras en el bucket |\n| calculated_at | timestamp | Momento del cálculo |"
+					},
+					"response": [
+						{
+							"name": "Success Response",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"bucket\": \"2026-01-31T10:00:00Z\",\n    \"plant_source_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n    \"avg_power_gen\": 125.5,\n    \"avg_power_con\": 45.2,\n    \"avg_efficiency\": 87.3,\n    \"avg_temp\": 42.1,\n    \"sample_count\": 60,\n    \"calculated_at\": \"2026-01-31T10:05:00Z\"\n}"
+								},
+								"url": {
+									"raw": "{{webhookReceiverUrl}}",
+									"host": [
+										"{{webhookReceiverUrl}}"
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"body": "{\n    \"status\": \"received\",\n    \"message\": \"Webhook processed successfully\"\n}"
+						}
+					]
+				}
+			],
+			"description": "Endpoints para simular un receptor de webhook"
+		},
+		{
+			"name": "Service API",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/health",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"health"
+							]
+						},
+						"description": "Verifica que el servicio esté corriendo"
+					},
+					"response": []
+				},
+				{
+					"name": "Send Test Event (Intake)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"event_type\": \"power_reading\",\n    \"plant_source_id\": \"550e8400-e29b-41d4-a716-446655440000\",\n    \"source\": \"sensor_001\",\n    \"data\": {\n        \"power_generated_mw\": 125.5,\n        \"power_consumed_mw\": 45.2,\n        \"efficiency_percent\": 87.3,\n        \"temperature_celsius\": 42.1\n    },\n    \"metadata\": {\n        \"sensor_version\": \"2.1.0\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/v1/test/intake",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"test",
+								"intake"
+							]
+						},
+						"description": "Envía un evento de prueba que será procesado y eventualmente agregado en las estadísticas horarias.\n\n## Campos requeridos en data para agregaciones\n\n- `power_generated_mw`: Potencia generada\n- `power_consumed_mw`: Potencia consumida  \n- `efficiency_percent`: Eficiencia\n- `temperature_celsius`: Temperatura"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints del servicio de monitoreo"
+		}
+	]
+}

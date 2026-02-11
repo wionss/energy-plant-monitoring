@@ -31,7 +31,7 @@ func LoadDBSettings() (DBSettings, error) {
 }
 
 func DBUriPsql(dbSetting DBSettings) string {
-	databaseUrl := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?search_path=%s",
+	databaseUrl := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?search_path=%s&sslmode=disable",
 		dbSetting.DbUser,
 		dbSetting.DbPassword,
 		dbSetting.DbHost,

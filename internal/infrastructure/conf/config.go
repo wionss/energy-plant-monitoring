@@ -2,15 +2,15 @@ package conf
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 )
 
 type Config struct {
-	Port             string `env:"PORT" envDefault:"9000"`
-	Env              string `env:"ENVIRONMENT" envDefault:"dev"`
-	ListKafkaBrokers string `env:"LIST_KAFKA_BROKERS,required"`
-	ConsumeGroup     string `env:"CONSUMER_GROUP,required"`
+	Port              string `env:"PORT" envDefault:"9000"`
+	Env               string `env:"ENVIRONMENT" envDefault:"dev"`
+	ListKafkaBrokers  string `env:"LIST_KAFKA_BROKERS,required"`
+	ConsumeGroup      string `env:"CONSUMER_GROUP,required"`
 	HttpClientTimeout int    `env:"HTTP_CLIENT_TIMEOUT" envDefault:"30"`
 
 	// Kafka Topics
@@ -25,7 +25,7 @@ type Config struct {
 	AllowedCorsSuffixes string `env:"ALLOWED_CORS_SUFFIXES" envDefault:".spotcloud.io"`
 
 	// Telegram Notifications
-	TelegramEnabled bool   `env:"TELEGRAM_ENABLED" envDefault:"false"`
+	TelegramEnabled  bool   `env:"TELEGRAM_ENABLED" envDefault:"false"`
 	TelegramBotToken string `env:"TELEGRAM_BOT_TOKEN"`
 	TelegramChatID   string `env:"TELEGRAM_CHAT_ID"`
 }
@@ -47,5 +47,5 @@ func OnSetConfig(tag string, value interface{}, isDefault bool) {
 		msg += " (default)"
 	}
 
-	log.Println(msg)
+	slog.Info("config loaded", "setting", msg)
 }

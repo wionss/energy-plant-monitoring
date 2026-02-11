@@ -1,6 +1,7 @@
 package container
 
 import (
+	"log/slog"
 	"net/http"
 
 	"monitoring-energy-service/internal/api"
@@ -18,23 +19,20 @@ import (
 
 type ContainerOption func(*Container)
 
-// Container mantiene todas las dependencias de la aplicación (Dependency Injection)
-//
-// CAMBIOS REALIZADOS:
-// - Agregado EventRepository: Para acceso a base de datos de eventos
-// - Agregado EventGenerator: Para generar eventos automáticamente
-// - Agregado EnergyPlantRepository: Para validar plantas antes de guardar eventos
-// - Agregado TelegramNotifier: Para notificar errores de validación a Telegram
 type Container struct {
 	db                    *gorm.DB
 	cfg                   conf.Config
 	KafkaService          input.KafkaServiceInterface
 	WebhookAdapter        output.WebhookAdapterInterface
 	ExampleRepository     output.ExampleRepositoryInterface
-	EventRepository       output.EventRepositoryInterface       // Para gestionar eventos en DB
-	EnergyPlantRepository output.EnergyPlantRepositoryInterface // Para validar plantas
-	EventGenerator        *api.EventGenerator                   // Para generar eventos cada 5 min
-	TelegramNotifier      *telegram.Notifier                    // Para notificar errores a Telegram
+	EventRepository       output.EventRepositoryInterface
+	EventOperationalRepo  output.EventOperationalRepositoryInterface
+	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface
+	DualEventWriter       output.DualEventWriterInterface
+	EnergyPlantRepository output.EnergyPlantRepositoryInterface
+	PlantStatusRepository output.PlantStatusRepositoryInterface
+	AnalyticsCoordinator  output.AnalyticsCoordinatorInterface
+	TelegramNotifier      *telegram.Notifier
 }
 
 func NewContainer(
@@ -55,25 +53,53 @@ func NewContainer(
 	exampleRepository := repositories.NewExampleRepository(db)
 	container.ExampleRepository = exampleRepository
 
-	// CAMBIO: Inicializa EventRepository
-	// RAZÓN: Necesario para que IntakeHandler y REST API puedan acceder a eventos en DB
 	eventRepository := repositories.NewEventRepository(db)
 	container.EventRepository = eventRepository
 
-	// CAMBIO: Inicializa EnergyPlantRepository
-	// RAZÓN: Necesario para validar que las plantas existen antes de guardar eventos
 	energyPlantRepository := repositories.NewEnergyPlantRepository(db)
 	container.EnergyPlantRepository = energyPlantRepository
 
-	// Initialize Kafka
+	plantStatusRepository := repositories.NewPlantStatusRepository(db)
+	container.PlantStatusRepository = plantStatusRepository
+
+	eventOpRepo := repositories.NewEventOperationalRepository(db)
+	container.EventOperationalRepo = eventOpRepo
+
+	eventAnRepo := repositories.NewEventAnalyticalRepository(db)
+	container.EventAnalyticalRepo = eventAnRepo
+
+	// Initialize Kafka first (needed for spillover callback)
 	kafkaFactory := kafkaconf.NewKafkaFactory(kafkaBrokers, autoOffset)
 	kafkaAdapter := kafka.NewKafkaAdapter(kafkaFactory, consumerGroup)
 	kafkaService := api.NewKafkaService(kafkaAdapter)
 	container.KafkaService = kafkaService
 
+	// Initialize DualEventWriter with spillover callback wired to Kafka DLQ
+	dualWriter := repositories.NewDualEventWriterWithConfig(db, repositories.DualEventWriterConfig{
+		OpWorkerCount: 2,
+		AnWorkerCount: 2,
+		SpilloverFunc: func(eventData []byte, reason string) {
+			kafkaService.SendToDLQ(eventData, "spillover: "+reason)
+		},
+	})
+	container.DualEventWriter = dualWriter
+
 	// Initialize Webhook adapter
 	webhookAdapter := webhook.NewAdapter(httpClient)
 	container.WebhookAdapter = webhookAdapter
+
+	// Initialize Analytics Coordinator
+	analyticsWorkerRepo := repositories.NewAnalyticsWorkerRepo(db)
+	analyticsCoordinator := repositories.NewAnalyticsCoordinator(
+		analyticsWorkerRepo,
+		webhookAdapter,
+		repositories.AnalyticsCoordinatorConfig{
+			WebhookURL:     container.cfg.WebhookUrl,
+			WebhookEnabled: container.cfg.WebhookEnabled,
+		},
+	)
+	container.AnalyticsCoordinator = analyticsCoordinator
+	go analyticsCoordinator.Start()
 
 	// Initialize Telegram notifier
 	telegramNotifier := telegram.NewNotifier(
@@ -83,16 +109,9 @@ func NewContainer(
 	)
 	container.TelegramNotifier = telegramNotifier
 
-	// Register Kafka handlers here
-	// CAMBIO: IntakeHandler ahora recibe eventRepository, energyPlantRepository y telegramNotifier
-	// RAZÓN: Necesita validar plantas antes de guardar eventos y notificar errores a Telegram
-	intakeHandler := api.NewIntakeHandler(eventRepository, energyPlantRepository, telegramNotifier)
+	// Register Kafka handlers
+	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, plantStatusRepository, telegramNotifier, true)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
-
-	// CAMBIO: Inicializa Event Generator con topic "intake"
-	// RAZÓN: Genera automáticamente 30 eventos cada 5 minutos enviándolos a Kafka
-	eventGenerator := api.NewEventGenerator(kafkaService, "intake")
-	container.EventGenerator = eventGenerator
 
 	return container
 }
@@ -105,4 +124,38 @@ func WithConfig(config conf.Config) ContainerOption {
 
 func (c *Container) GetConfig() conf.Config {
 	return c.cfg
+}
+
+// Shutdown performs an ordered shutdown of all components.
+func (c *Container) Shutdown() {
+	slog.Info("shutting down application components")
+
+	// 1. Stop Kafka consumer
+	slog.Info("stopping Kafka consumer")
+	c.KafkaService.StopConsuming()
+
+	// 2. Stop analytics coordinator
+	slog.Info("stopping analytics coordinator")
+	c.AnalyticsCoordinator.Stop()
+
+	// 3. Stop dual event writer (drains async channel)
+	slog.Info("stopping dual event writer")
+	c.DualEventWriter.Stop()
+
+	// 4. Stop Telegram notifier (drains alert channel)
+	slog.Info("stopping Telegram notifier")
+	c.TelegramNotifier.Stop()
+
+	// 5. Close database connection
+	slog.Info("closing database connection")
+	sqlDB, err := c.db.DB()
+	if err != nil {
+		slog.Error("failed to get underlying sql.DB", "error", err)
+	} else {
+		if err := sqlDB.Close(); err != nil {
+			slog.Error("failed to close database", "error", err)
+		}
+	}
+
+	slog.Info("shutdown complete")
 }

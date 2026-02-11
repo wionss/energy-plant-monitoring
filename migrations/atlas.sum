@@ -1,2 +1,7 @@
-h1:d7S7sWtVl+0XvBzT3QjmyLx3m71iBYn1XD3IAilNw7M=
-20260110171100_firts-migration.sql h1:hPIjMcnVUG+SMsLHVfJfY97nNdT5CxTVISjZRnNMZMI=
+h1:VWCMpmwo3AjfNt0vk47jc/ECNKeNho7e/hibXnF1eCs=
+20260110171050_bootstrap_schemas.sql h1:7hmrmAIczznKcIJPWbn2FJI+WweqJXMQfJ1enNoj2Js=
+20260110171100_firts-migration.sql h1:bY/GFpTNNKHmgP74IOutX6NnrIuSBImsQbdLleLo/h4=
+20260118120000_multi_schema_timescaledb.sql h1:Uj3a4zXP5uuMz9MKWZI9G8upy06GHOwoK8pPwaAXxdw=
+20260118221923_analitictables.sql h1:fDbJVJytu2n+pVBA9GC04ffmcKSDAdn3hP8qz5MGkHI=
+20260131105246_analytics_worker_tables.sql h1:2ITXn+dbjIAx7FtOzeqDduJsBjEt3yV0uMdHwiKfJJ4=
+20260131120000_add_geo_and_cache_fields.sql h1:QTm+5URsB1phplQv2aBKBpfKJrNaqcwDBZJ/y4drFII=

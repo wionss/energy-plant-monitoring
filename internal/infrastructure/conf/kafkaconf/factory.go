@@ -1,7 +1,7 @@
 package kafkaconf
 
 import (
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -12,9 +12,9 @@ func deliveryReport(deliveryChan chan kafka.Event) {
 		switch ev := e.(type) {
 		case *kafka.Message:
 			if ev.TopicPartition.Error != nil {
-				log.Printf("Delivery failed: %v\n", ev.TopicPartition.Error)
+				slog.Error("delivery failed", "error", ev.TopicPartition.Error)
 			} else {
-				log.Printf("Delivered message to %v\n", ev.TopicPartition)
+				slog.Debug("message delivered", "partition", ev.TopicPartition)
 			}
 		}
 	}
@@ -45,7 +45,8 @@ func (kf *KafkaFactory) NewProducer() *kafka.Producer {
 	})
 
 	if err != nil {
-		log.Fatalf("Failed to create producer: %s", err)
+		slog.Error("failed to create Kafka producer", "error", err)
+		panic("failed to create Kafka producer: " + err.Error())
 	}
 
 	go deliveryReport(deliveryChan)
@@ -65,7 +66,8 @@ func (kf *KafkaFactory) NewConsumer(groupID string) *kafka.Consumer {
 		"max.poll.interval.ms":    300000,
 	})
 	if err != nil {
-		panic(err)
+		slog.Error("failed to create Kafka consumer", "error", err)
+		panic("failed to create Kafka consumer: " + err.Error())
 	}
 	return c
 }

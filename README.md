@@ -336,3 +336,6 @@ diseñar una base de datos de 3 o 4 schemas,  capa master capa operativa capa an
 
 agregar logica, workers para gestionar la data 
 
+'''bash
+python3 charge-test.py --events 500000 --workers 10
+'''

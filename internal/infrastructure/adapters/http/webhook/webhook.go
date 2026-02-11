@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"monitoring-energy-service/internal/domain/ports/output"
@@ -35,7 +35,7 @@ func (a *Adapter) SendPayload(url string, payload any) error {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	log.Printf("sending webhook request to %s with payload: %s", url, string(jsonData))
+	slog.Info("sending webhook request", "url", url)
 
 	resp, err := a.client.Do(req)
 	if err != nil {

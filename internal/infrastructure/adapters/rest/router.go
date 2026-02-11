@@ -26,13 +26,38 @@ func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
 			examples.DELETE("/:id", DeleteExample(c))
 		}
 
-		// CAMBIO: Agregado grupo de endpoints para eventos
+		// CAMBIO: Agregado grupo de endpoints para eventos (legacy)
 		// RAZÓN: Permite consultar eventos guardados desde Kafka via HTTP REST
 		events := api.Group("/events")
 		{
 			events.GET("", ListEvents(c))                  // GET /api/v1/events - Lista todos
 			events.GET("/:id", GetEvent(c))                // GET /api/v1/events/:id - Obtiene uno por ID
 			events.GET("/type/:type", GetEventsByType(c)) // GET /api/v1/events/type/:type - Filtra por tipo
+
+			// CAMBIO: Endpoints para datos operacionales (hot data)
+			// RAZÓN: Consultas frecuentes sobre eventos recientes
+			operational := events.Group("/operational")
+			{
+				operational.GET("", ListOperationalEvents(c))      // GET /api/v1/events/operational
+				operational.GET("/:id", GetOperationalEvent(c))    // GET /api/v1/events/operational/:id
+			}
+
+			// CAMBIO: Endpoints para datos analíticos (TimescaleDB)
+			// RAZÓN: Consultas por rango de tiempo y agregaciones
+			analytical := events.Group("/analytical")
+			{
+				analytical.GET("", ListAnalyticalEvents(c))        // GET /api/v1/events/analytical?start=...&end=...
+				analytical.GET("/hourly", GetHourlyAggregation(c)) // GET /api/v1/events/analytical/hourly?plant_id=...&start=...&end=...
+				analytical.GET("/daily", GetDailyAggregation(c))   // GET /api/v1/events/analytical/daily?plant_id=...&start=...&end=...
+			}
+		}
+
+		// Digital Twin: Real-time plant status endpoints
+		plants := api.Group("/plants")
+		{
+			plants.GET("/status", ListPlantStatus(c))                   // GET /api/v1/plants/status - All plant statuses
+			plants.GET("/status/:id", GetPlantStatus(c))                // GET /api/v1/plants/status/:id - Specific plant status
+			plants.GET("/status/filter/:status", ListPlantStatusByStatus(c)) // GET /api/v1/plants/status/filter/:status - Filter by status
 		}
 
 		// CAMBIO: Agregado grupo de endpoints para pruebas
