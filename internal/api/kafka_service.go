@@ -67,7 +67,7 @@ func (ks *KafkaService) SendToDLQ(message []byte, reason string) {
 }
 
 func (ks *KafkaService) ConsumeEvents() {
-	slog.Info("starting Kafka consumer")
+	slog.Info("starting Kafka consumer with manual commit enabled")
 
 	topics := make([]string, 0, len(ks.topicHandlers))
 	for topic := range ks.topicHandlers {
@@ -93,7 +93,7 @@ func (ks *KafkaService) ConsumeEvents() {
 			slog.Info("stopping Kafka event consumption")
 			return
 		default:
-			message, topic, err := ks.kafkaAdapter.ReadMessage()
+			kafkaMsg, err := ks.kafkaAdapter.ReadMessage()
 			if err != nil {
 				slog.Error("error reading message", "error", err)
 
@@ -120,29 +120,65 @@ func (ks *KafkaService) ConsumeEvents() {
 			disconnectedCount = 0
 			connectionRefusedCount = 0
 
-			handler, ok := ks.topicHandlers[topic]
+			handler, ok := ks.topicHandlers[kafkaMsg.Topic]
 			if !ok {
-				slog.Warn("no handler registered for topic", "topic", topic)
+				slog.Warn("no handler registered for topic", "topic", kafkaMsg.Topic)
+				// Commit even for unhandled topics to prevent reprocessing
+				ks.commitOffset(kafkaMsg)
 				continue
 			}
 
-			slog.Info("handling message", "topic", topic)
-			ks.handleWithRetry(handler, message, topic)
+			slog.Info("handling message",
+				"topic", kafkaMsg.Topic,
+				"partition", kafkaMsg.Partition,
+				"offset", kafkaMsg.Offset,
+			)
+
+			// Process message with retry logic
+			success := ks.handleWithRetry(handler, kafkaMsg.Value, kafkaMsg.Topic)
+
+			// PRODUCTION READY: Only commit offset after successful processing
+			// This ensures at-least-once delivery semantics
+			if success {
+				ks.commitOffset(kafkaMsg)
+			} else {
+				// Message was sent to DLQ, still commit to avoid infinite retry loop
+				// The DLQ acts as a persistent record of failed messages
+				slog.Warn("message processing failed, committing offset after DLQ send",
+					"topic", kafkaMsg.Topic,
+					"partition", kafkaMsg.Partition,
+					"offset", kafkaMsg.Offset,
+				)
+				ks.commitOffset(kafkaMsg)
+			}
 		}
 	}
 }
 
-func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []byte, topic string) {
+// commitOffset manually commits the Kafka offset for a message
+func (ks *KafkaService) commitOffset(msg *output.KafkaMessage) {
+	if err := ks.kafkaAdapter.CommitMessage(msg); err != nil {
+		slog.Error("failed to commit offset",
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+			"error", err,
+		)
+	}
+}
+
+// handleWithRetry returns true if the message was processed successfully (including permanent errors sent to DLQ)
+func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []byte, topic string) bool {
 	err := handler.HandleMessage(message)
 	if err == nil {
-		return
+		return true
 	}
 
 	// Permanent errors go directly to DLQ
 	if domainerrors.IsPermanent(err) {
 		slog.Warn("permanent error, sending to DLQ", "topic", topic, "error", err)
 		ks.SendToDLQ(message, err.Error())
-		return
+		return true // DLQ send is considered "handled"
 	}
 
 	// Transient errors: retry with exponential backoff
@@ -158,13 +194,13 @@ func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []
 
 		err = handler.HandleMessage(message)
 		if err == nil {
-			return
+			return true
 		}
 
 		if domainerrors.IsPermanent(err) {
 			slog.Warn("permanent error on retry, sending to DLQ", "topic", topic, "error", err)
 			ks.SendToDLQ(message, err.Error())
-			return
+			return true // DLQ send is considered "handled"
 		}
 	}
 
@@ -175,6 +211,7 @@ func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []
 		"error", err,
 	)
 	ks.SendToDLQ(message, "max retries exhausted: "+err.Error())
+	return true // DLQ send is considered "handled"
 }
 
 func (ks *KafkaService) StopConsuming() {

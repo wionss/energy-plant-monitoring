@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,7 @@ type DualEventWriter struct {
 	wg       sync.WaitGroup
 	stopOnce sync.Once
 	stopChan chan struct{}
+	stopping atomic.Bool
 
 	// Metrics
 	opEventsProcessed atomic.Int64
@@ -168,6 +170,10 @@ func (w *DualEventWriter) SaveEventAsync(op *entities.EventOperational, an *enti
 
 // SaveEventAsyncWithRaw enqueues events with raw data for spillover capability.
 func (w *DualEventWriter) SaveEventAsyncWithRaw(op *entities.EventOperational, an *entities.EventAnalytical, rawData []byte) error {
+	if w.stopping.Load() {
+		return fmt.Errorf("DualEventWriter is shutting down, rejecting event %s", op.ID)
+	}
+
 	// Enqueue to operational pipeline
 	select {
 	case w.opChannel <- operationalEvent{entity: op, rawData: rawData}:
@@ -373,20 +379,32 @@ func (w *DualEventWriter) metricsReporter() {
 }
 
 // Stop gracefully shuts down the writer, draining all pending events.
+// It blocks until all workers have finished processing buffered items.
 func (w *DualEventWriter) Stop() {
 	w.stopOnce.Do(func() {
-		slog.Info("stopping DualEventWriter",
-			"op_pending", len(w.opChannel),
-			"an_pending", len(w.anChannel),
+		opPending := len(w.opChannel)
+		anPending := len(w.anChannel)
+		slog.Info("stopping DualEventWriter, draining pending events",
+			"op_pending", opPending,
+			"an_pending", anPending,
 		)
+
+		// 1. Reject new events immediately
+		w.stopping.Store(true)
+
+		// 2. Signal workers to drain remaining items and exit
 		close(w.stopChan)
+
+		// 3. Wait for all workers (and metrics reporter) to finish
 		w.wg.Wait()
 
 		// Final metrics
 		elapsed := time.Since(w.metricsStartTime)
-		slog.Info("DualEventWriter stopped",
+		slog.Info("DualEventWriter stopped, all events drained",
 			"total_op_events", w.opEventsProcessed.Load(),
 			"total_an_events", w.anEventsProcessed.Load(),
+			"drained_op", opPending,
+			"drained_an", anPending,
 			"uptime_seconds", elapsed.Seconds(),
 		)
 	})

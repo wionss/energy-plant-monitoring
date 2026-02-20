@@ -1,6 +1,8 @@
 package kafka
 
 import (
+	"log/slog"
+
 	"monitoring-energy-service/internal/domain/ports/output"
 	"monitoring-energy-service/internal/infrastructure/conf/kafkaconf"
 
@@ -26,23 +28,59 @@ func (ka *KafkaAdapter) SubscribeTopics(topics []string) error {
 }
 
 func (ka *KafkaAdapter) SendMessage(topic, key string, message []byte) error {
-	ka.producer.Produce(&kafka.Message{
+	err := ka.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 		Key:            []byte(key),
 		Value:          message,
 	}, nil)
+	if err != nil {
+		return err
+	}
 
 	ka.producer.Flush(15 * 1000)
 
 	return nil
 }
 
-func (ka *KafkaAdapter) ReadMessage() (message []byte, topic string, err error) {
+// ReadMessage reads the next message from Kafka and returns it with metadata for manual commit.
+func (ka *KafkaAdapter) ReadMessage() (*output.KafkaMessage, error) {
 	msg, err := ka.consumer.ReadMessage(-1)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
-	topic = *msg.TopicPartition.Topic
-	return msg.Value, topic, nil
+	return &output.KafkaMessage{
+		Value:     msg.Value,
+		Topic:     *msg.TopicPartition.Topic,
+		Partition: msg.TopicPartition.Partition,
+		Offset:    int64(msg.TopicPartition.Offset),
+	}, nil
+}
+
+// CommitMessage manually commits the offset for the given message.
+// This ensures at-least-once delivery semantics by only committing after successful processing.
+func (ka *KafkaAdapter) CommitMessage(msg *output.KafkaMessage) error {
+	tp := kafka.TopicPartition{
+		Topic:     &msg.Topic,
+		Partition: msg.Partition,
+		Offset:    kafka.Offset(msg.Offset + 1), // Commit the next offset to read
+	}
+
+	_, err := ka.consumer.CommitOffsets([]kafka.TopicPartition{tp})
+	if err != nil {
+		slog.Error("failed to commit Kafka offset",
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+			"error", err,
+		)
+		return err
+	}
+
+	slog.Debug("Kafka offset committed",
+		"topic", msg.Topic,
+		"partition", msg.Partition,
+		"offset", msg.Offset,
+	)
+	return nil
 }

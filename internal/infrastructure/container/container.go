@@ -91,6 +91,7 @@ func NewContainer(
 	// Initialize Analytics Coordinator
 	analyticsWorkerRepo := repositories.NewAnalyticsWorkerRepo(db)
 	analyticsCoordinator := repositories.NewAnalyticsCoordinator(
+		db,
 		analyticsWorkerRepo,
 		webhookAdapter,
 		repositories.AnalyticsCoordinatorConfig{

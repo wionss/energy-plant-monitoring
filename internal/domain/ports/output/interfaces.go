@@ -8,11 +8,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// KafkaMessage wraps a Kafka message with metadata for manual commit support
+type KafkaMessage struct {
+	Value     []byte
+	Topic     string
+	Partition int32
+	Offset    int64
+}
+
 // KafkaAdapterInterface defines the contract for Kafka adapter operations
 type KafkaAdapterInterface interface {
 	SendMessage(topic, key string, message []byte) error
-	ReadMessage() (message []byte, topic string, err error)
+	// ReadMessage returns a KafkaMessage with metadata for manual commit support
+	ReadMessage() (*KafkaMessage, error)
 	SubscribeTopics(topics []string) error
+	// CommitMessage manually commits the offset for the given message
+	// This should only be called after successful processing
+	CommitMessage(msg *KafkaMessage) error
 }
 
 // WebhookAdapterInterface defines the contract for webhook operations

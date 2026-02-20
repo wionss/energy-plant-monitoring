@@ -8,6 +8,8 @@ import (
 
 	"monitoring-energy-service/internal/domain/entities"
 	"monitoring-energy-service/internal/domain/ports/output"
+
+	"gorm.io/gorm"
 )
 
 // AnalyticsCoordinatorConfig holds configuration for the analytics coordinator
@@ -39,8 +41,16 @@ func DefaultAnalyticsCoordinatorConfig() AnalyticsCoordinatorConfig {
 	}
 }
 
+// Advisory lock IDs for distributed coordination.
+// These must be unique across the application to prevent conflicts.
+const (
+	advisoryLockAggregator int64 = 100001
+	advisoryLockDispatcher int64 = 100002
+)
+
 // AnalyticsCoordinator orchestrates the analytics aggregation and webhook dispatch
 type AnalyticsCoordinator struct {
+	db             *gorm.DB
 	repo           output.AnalyticsWorkerRepoInterface
 	webhookAdapter output.WebhookAdapterInterface
 	config         AnalyticsCoordinatorConfig
@@ -53,13 +63,16 @@ type AnalyticsCoordinator struct {
 	bucketsProcessed   atomic.Int64
 	webhooksSent       atomic.Int64
 	webhooksFailed     atomic.Int64
+	locksSkipped       atomic.Int64
 	metricsStartTime   time.Time
 }
 
 var _ output.AnalyticsCoordinatorInterface = &AnalyticsCoordinator{}
 
-// NewAnalyticsCoordinator creates a new analytics coordinator
+// NewAnalyticsCoordinator creates a new analytics coordinator.
+// The db parameter is used for PostgreSQL advisory locks to coordinate work across replicas.
 func NewAnalyticsCoordinator(
+	db *gorm.DB,
 	repo output.AnalyticsWorkerRepoInterface,
 	webhookAdapter output.WebhookAdapterInterface,
 	config AnalyticsCoordinatorConfig,
@@ -82,6 +95,7 @@ func NewAnalyticsCoordinator(
 	}
 
 	return &AnalyticsCoordinator{
+		db:               db,
 		repo:             repo,
 		webhookAdapter:   webhookAdapter,
 		config:           config,
@@ -125,6 +139,7 @@ func (c *AnalyticsCoordinator) Stop() {
 			"total_buckets_processed", c.bucketsProcessed.Load(),
 			"total_webhooks_sent", c.webhooksSent.Load(),
 			"total_webhooks_failed", c.webhooksFailed.Load(),
+			"total_locks_skipped", c.locksSkipped.Load(),
 			"uptime_seconds", elapsed.Seconds(),
 		)
 	})
@@ -151,7 +166,32 @@ func (c *AnalyticsCoordinator) runAggregator() {
 	}
 }
 
+// tryAdvisoryLock attempts to acquire a PostgreSQL advisory lock.
+// Returns true if the lock was acquired, false if another replica holds it.
+func (c *AnalyticsCoordinator) tryAdvisoryLock(lockID int64) bool {
+	var acquired bool
+	if err := c.db.Raw("SELECT pg_try_advisory_lock(?)", lockID).Scan(&acquired).Error; err != nil {
+		slog.Error("failed to acquire advisory lock", "lock_id", lockID, "error", err)
+		return false
+	}
+	return acquired
+}
+
+// releaseAdvisoryLock releases a previously acquired PostgreSQL advisory lock.
+func (c *AnalyticsCoordinator) releaseAdvisoryLock(lockID int64) {
+	if err := c.db.Exec("SELECT pg_advisory_unlock(?)", lockID).Error; err != nil {
+		slog.Error("failed to release advisory lock", "lock_id", lockID, "error", err)
+	}
+}
+
 func (c *AnalyticsCoordinator) doAggregation() {
+	if !c.tryAdvisoryLock(advisoryLockAggregator) {
+		slog.Debug("aggregator lock held by another replica, skipping cycle")
+		c.locksSkipped.Add(1)
+		return
+	}
+	defer c.releaseAdvisoryLock(advisoryLockAggregator)
+
 	start := time.Now()
 
 	count, err := c.repo.RecalculateDirtyBuckets(c.config.LookbackWindow)
@@ -191,6 +231,13 @@ func (c *AnalyticsCoordinator) doDispatch() {
 	if !c.config.WebhookEnabled {
 		return
 	}
+
+	if !c.tryAdvisoryLock(advisoryLockDispatcher) {
+		slog.Debug("dispatcher lock held by another replica, skipping cycle")
+		c.locksSkipped.Add(1)
+		return
+	}
+	defer c.releaseAdvisoryLock(advisoryLockDispatcher)
 
 	webhooks, err := c.repo.GetPendingWebhooks(c.config.WebhookBatchSize)
 	if err != nil {
@@ -279,7 +326,7 @@ func (c *AnalyticsCoordinator) runMetricsReporter() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
-	var lastBuckets, lastSent, lastFailed int64
+	var lastBuckets, lastSent, lastFailed, lastSkipped int64
 
 	for {
 		select {
@@ -289,6 +336,7 @@ func (c *AnalyticsCoordinator) runMetricsReporter() {
 			buckets := c.bucketsProcessed.Load()
 			sent := c.webhooksSent.Load()
 			failed := c.webhooksFailed.Load()
+			skipped := c.locksSkipped.Load()
 
 			slog.Info("analytics_coordinator_metrics",
 				"buckets_total", buckets,
@@ -297,11 +345,14 @@ func (c *AnalyticsCoordinator) runMetricsReporter() {
 				"webhooks_sent_last_60s", sent-lastSent,
 				"webhooks_failed_total", failed,
 				"webhooks_failed_last_60s", failed-lastFailed,
+				"locks_skipped_total", skipped,
+				"locks_skipped_last_60s", skipped-lastSkipped,
 			)
 
 			lastBuckets = buckets
 			lastSent = sent
 			lastFailed = failed
+			lastSkipped = skipped
 		}
 	}
 }

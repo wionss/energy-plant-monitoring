@@ -22,6 +22,8 @@ type Notifier struct {
 	client    *http.Client
 	alertChan chan alertMessage
 	stopOnce  sync.Once
+	stopMu    sync.Mutex
+	stopped   bool
 	wg        sync.WaitGroup
 }
 
@@ -66,6 +68,14 @@ func (n *Notifier) worker() {
 }
 
 func (n *Notifier) enqueue(text string) {
+	n.stopMu.Lock()
+	defer n.stopMu.Unlock()
+
+	if n.stopped {
+		slog.Warn("Telegram notifier stopped, dropping message")
+		return
+	}
+
 	select {
 	case n.alertChan <- alertMessage{text: text}:
 	default:
@@ -76,6 +86,11 @@ func (n *Notifier) enqueue(text string) {
 func (n *Notifier) Stop() {
 	n.stopOnce.Do(func() {
 		slog.Info("stopping Telegram notifier")
+
+		n.stopMu.Lock()
+		n.stopped = true
+		n.stopMu.Unlock()
+
 		close(n.alertChan)
 		n.wg.Wait()
 		slog.Info("Telegram notifier stopped")
