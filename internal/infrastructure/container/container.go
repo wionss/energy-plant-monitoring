@@ -7,6 +7,7 @@ import (
 	"monitoring-energy-service/internal/api"
 	"monitoring-energy-service/internal/domain/ports/input"
 	"monitoring-energy-service/internal/domain/ports/output"
+	"monitoring-energy-service/internal/domain/services"
 	"monitoring-energy-service/internal/infrastructure/adapters/http/webhook"
 	"monitoring-energy-service/internal/infrastructure/adapters/kafka"
 	"monitoring-energy-service/internal/infrastructure/adapters/repositories"
@@ -110,8 +111,22 @@ func NewContainer(
 	)
 	container.TelegramNotifier = telegramNotifier
 
+	// Initialize AlertEvaluationService for Paso 4: Real-time Alerts
+	alertEvaluator := services.NewAlertEvaluationService(telegramNotifier)
+
+	// Initialize EventIngestionService (domain service for business logic)
+	// CAMBIO: Extraer lógica del handler a un servicio testeable
+	eventIngestionService := services.NewEventIngestionService(
+		dualWriter,
+		energyPlantRepository,
+		plantStatusRepository,
+		alertEvaluator,
+		telegramNotifier,
+		true,
+	)
+
 	// Register Kafka handlers
-	intakeHandler := api.NewIntakeHandler(dualWriter, energyPlantRepository, plantStatusRepository, telegramNotifier, true)
+	intakeHandler := api.NewIntakeHandler(eventIngestionService)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
 	return container

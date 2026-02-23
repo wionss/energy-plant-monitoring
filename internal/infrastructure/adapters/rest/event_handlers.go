@@ -6,13 +6,8 @@ package rest
 // Expone endpoints HTTP para consultar los eventos que fueron enviados a Kafka
 // y guardados en PostgreSQL por el IntakeHandler.
 //
-// CAMBIO REALIZADO: Archivo creado desde cero
-// RAZÓN: Necesitábamos una API REST para consultar eventos desde cualquier cliente HTTP
-//
-// ENDPOINTS CREADOS:
-// - GET /api/v1/events           - Lista todos los eventos (ordenados por fecha DESC)
-// - GET /api/v1/events/:id       - Obtiene un evento específico por UUID
-// - GET /api/v1/events/type/:type - Filtra eventos por tipo (power_reading, alert, etc.)
+// CAMBIO: Refactorizado para inyectar dependencias en el constructor
+// RAZÓN: Elimina el anti-patrón Service Locator (pasar el container completo)
 
 import (
 	"errors"
@@ -20,15 +15,34 @@ import (
 	"time"
 
 	domainerrors "monitoring-energy-service/internal/domain/errors"
-	"monitoring-energy-service/internal/infrastructure/container"
+	"monitoring-energy-service/internal/domain/ports/output"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// EventHandlers agrupa todos los handlers relacionados con eventos
+type EventHandlers struct {
+	eventRepo   output.EventRepositoryInterface
+	eventOpRepo output.EventOperationalRepositoryInterface
+	eventAnRepo output.EventAnalyticalRepositoryInterface
+}
+
+// NewEventHandlers crea una nueva instancia de EventHandlers
+// Inyecta solo las dependencias necesarias (no el container completo)
+func NewEventHandlers(
+	eventRepo output.EventRepositoryInterface,
+	eventOpRepo output.EventOperationalRepositoryInterface,
+	eventAnRepo output.EventAnalyticalRepositoryInterface,
+) *EventHandlers {
+	return &EventHandlers{
+		eventRepo:   eventRepo,
+		eventOpRepo: eventOpRepo,
+		eventAnRepo: eventAnRepo,
+	}
+}
+
 // ListEvents obtiene todos los eventos de la base de datos
-// CAMBIO: Handler nuevo
-// RAZÓN: Permite consultar el histórico completo de eventos vía HTTP
 //
 // ListEvents godoc
 // @Summary      List all events
@@ -39,9 +53,9 @@ import (
 // @Success      200  {array}   entities.EventEntity
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/events [get]
-func ListEvents(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) ListEvents() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		events, err := c.EventRepository.FindAll()
+		events, err := h.eventRepo.FindAll()
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -51,10 +65,6 @@ func ListEvents(c *container.Container) gin.HandlerFunc {
 }
 
 // GetEvent obtiene un evento específico por su ID
-// CAMBIO: Handler nuevo
-// RAZÓN: Permite recuperar un evento individual para análisis detallado
-// CAMBIO: Ahora distingue entre errores 404 (not found) y 500 (internal)
-// RAZÓN: Proporciona respuestas HTTP más precisas según el tipo de error
 //
 // GetEvent godoc
 // @Summary      Get an event by ID
@@ -67,7 +77,7 @@ func ListEvents(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      404  {object}  ErrorResponse
 // @Router       /api/v1/events/{id} [get]
-func GetEvent(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) GetEvent() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr := ctx.Param("id")
 		id, err := uuid.Parse(idStr)
@@ -76,7 +86,7 @@ func GetEvent(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		event, err := c.EventRepository.FindByID(id)
+		event, err := h.eventRepo.FindByID(id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
@@ -90,8 +100,6 @@ func GetEvent(c *container.Container) gin.HandlerFunc {
 }
 
 // GetEventsByType filtra eventos por tipo
-// CAMBIO: Handler nuevo
-// RAZÓN: Permite análisis de eventos específicos (ej: solo "alerts" o solo "power_reading")
 //
 // GetEventsByType godoc
 // @Summary      Get events by type
@@ -103,11 +111,11 @@ func GetEvent(c *container.Container) gin.HandlerFunc {
 // @Success      200  {array}   entities.EventEntity
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/events/type/{type} [get]
-func GetEventsByType(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) GetEventsByType() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		eventType := ctx.Param("type")
 
-		events, err := c.EventRepository.FindByEventType(eventType)
+		events, err := h.eventRepo.FindByEventType(eventType)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -131,9 +139,9 @@ func GetEventsByType(c *container.Container) gin.HandlerFunc {
 // @Success      200  {array}   entities.EventOperational
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/events/operational [get]
-func ListOperationalEvents(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) ListOperationalEvents() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		events, err := c.EventOperationalRepo.FindAll()
+		events, err := h.eventOpRepo.FindAll()
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -155,7 +163,7 @@ func ListOperationalEvents(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      404  {object}  ErrorResponse
 // @Router       /api/v1/events/operational/{id} [get]
-func GetOperationalEvent(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) GetOperationalEvent() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr := ctx.Param("id")
 		id, err := uuid.Parse(idStr)
@@ -164,7 +172,7 @@ func GetOperationalEvent(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		event, err := c.EventOperationalRepo.FindByID(id)
+		event, err := h.eventOpRepo.FindByID(id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
@@ -195,7 +203,7 @@ func GetOperationalEvent(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/events/analytical [get]
-func ListAnalyticalEvents(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) ListAnalyticalEvents() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		startStr := ctx.Query("start")
 		endStr := ctx.Query("end")
@@ -217,7 +225,7 @@ func ListAnalyticalEvents(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		events, err := c.EventAnalyticalRepo.FindByTimeRange(start, end)
+		events, err := h.eventAnRepo.FindByTimeRange(start, end)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -241,7 +249,7 @@ func ListAnalyticalEvents(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/events/analytical/hourly [get]
-func GetHourlyAggregation(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) GetHourlyAggregation() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		plantIdStr := ctx.Query("plant_id")
 		startStr := ctx.Query("start")
@@ -270,7 +278,7 @@ func GetHourlyAggregation(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		results, err := c.EventAnalyticalRepo.GetHourlyAggregation(plantId, start, end)
+		results, err := h.eventAnRepo.GetHourlyAggregation(plantId, start, end)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -294,7 +302,7 @@ func GetHourlyAggregation(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/events/analytical/daily [get]
-func GetDailyAggregation(c *container.Container) gin.HandlerFunc {
+func (h *EventHandlers) GetDailyAggregation() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		plantIdStr := ctx.Query("plant_id")
 		startStr := ctx.Query("start")
@@ -323,7 +331,7 @@ func GetDailyAggregation(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		results, err := c.EventAnalyticalRepo.GetDailyAggregation(plantId, start, end)
+		results, err := h.eventAnRepo.GetDailyAggregation(plantId, start, end)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

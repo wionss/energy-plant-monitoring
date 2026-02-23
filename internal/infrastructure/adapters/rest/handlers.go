@@ -6,7 +6,7 @@ import (
 
 	"monitoring-energy-service/internal/domain/entities"
 	domainerrors "monitoring-energy-service/internal/domain/errors"
-	"monitoring-energy-service/internal/infrastructure/container"
+	"monitoring-energy-service/internal/domain/ports/output"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,6 +29,18 @@ type ErrorResponse struct {
 	Error string `json:"error" example:"error message"`
 }
 
+// ExampleHandlers agrupa todos los handlers relacionados con ejemplos
+type ExampleHandlers struct {
+	exampleRepo output.ExampleRepositoryInterface
+}
+
+// NewExampleHandlers crea una nueva instancia de ExampleHandlers
+func NewExampleHandlers(exampleRepo output.ExampleRepositoryInterface) *ExampleHandlers {
+	return &ExampleHandlers{
+		exampleRepo: exampleRepo,
+	}
+}
+
 // ListExamples godoc
 // @Summary      List all examples
 // @Description  Get all examples from the database
@@ -38,9 +50,9 @@ type ErrorResponse struct {
 // @Success      200  {array}   entities.ExampleEntity
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/examples [get]
-func ListExamples(c *container.Container) gin.HandlerFunc {
+func (h *ExampleHandlers) ListExamples() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		examples, err := c.ExampleRepository.FindAll()
+		examples, err := h.exampleRepo.FindAll()
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -60,7 +72,7 @@ func ListExamples(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      404  {object}  ErrorResponse
 // @Router       /api/v1/examples/{id} [get]
-func GetExample(c *container.Container) gin.HandlerFunc {
+func (h *ExampleHandlers) GetExample() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr := ctx.Param("id")
 		id, err := uuid.Parse(idStr)
@@ -69,7 +81,7 @@ func GetExample(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		example, err := c.ExampleRepository.FindByID(id)
+		example, err := h.exampleRepo.FindByID(id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "example not found"})
@@ -93,7 +105,7 @@ func GetExample(c *container.Container) gin.HandlerFunc {
 // @Failure      400      {object}  ErrorResponse
 // @Failure      500      {object}  ErrorResponse
 // @Router       /api/v1/examples [post]
-func CreateExample(c *container.Container) gin.HandlerFunc {
+func (h *ExampleHandlers) CreateExample() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var req CreateExampleRequest
 		if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -106,7 +118,7 @@ func CreateExample(c *container.Container) gin.HandlerFunc {
 			Description: req.Description,
 		}
 
-		created, err := c.ExampleRepository.Create(entity)
+		created, err := h.exampleRepo.Create(entity)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -128,7 +140,7 @@ func CreateExample(c *container.Container) gin.HandlerFunc {
 // @Failure      404      {object}  ErrorResponse
 // @Failure      500      {object}  ErrorResponse
 // @Router       /api/v1/examples/{id} [put]
-func UpdateExample(c *container.Container) gin.HandlerFunc {
+func (h *ExampleHandlers) UpdateExample() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr := ctx.Param("id")
 		id, err := uuid.Parse(idStr)
@@ -137,7 +149,7 @@ func UpdateExample(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		existing, err := c.ExampleRepository.FindByID(id)
+		existing, err := h.exampleRepo.FindByID(id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "example not found"})
@@ -160,7 +172,7 @@ func UpdateExample(c *container.Container) gin.HandlerFunc {
 			existing.Description = req.Description
 		}
 
-		updated, err := c.ExampleRepository.Update(existing)
+		updated, err := h.exampleRepo.Update(existing)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -180,7 +192,7 @@ func UpdateExample(c *container.Container) gin.HandlerFunc {
 // @Failure      400  {object}  ErrorResponse
 // @Failure      500  {object}  ErrorResponse
 // @Router       /api/v1/examples/{id} [delete]
-func DeleteExample(c *container.Container) gin.HandlerFunc {
+func (h *ExampleHandlers) DeleteExample() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr := ctx.Param("id")
 		id, err := uuid.Parse(idStr)
@@ -189,7 +201,7 @@ func DeleteExample(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		if err := c.ExampleRepository.Delete(id); err != nil {
+		if err := h.exampleRepo.Delete(id); err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

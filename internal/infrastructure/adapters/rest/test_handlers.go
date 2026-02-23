@@ -6,14 +6,15 @@ package rest
 // Expone endpoints HTTP para probar el envío de notificaciones a Telegram
 // simulando mensajes como los que llegan desde Kafka.
 //
-// ENDPOINTS:
-// - POST /api/v1/test/intake - Simula un mensaje de Kafka para probar validaciones y alertas Telegram
+// CAMBIO: Refactorizado para inyectar dependencias
+// RAZÓN: Elimina el anti-patrón Service Locator
 
 import (
 	"fmt"
 	"net/http"
 
-	"monitoring-energy-service/internal/infrastructure/container"
+	"monitoring-energy-service/internal/domain/ports/output"
+	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -34,6 +35,23 @@ type TestIntakeResponse struct {
 	Error        string `json:"error,omitempty"`
 }
 
+// TestHandlers agrupa todos los handlers de prueba
+type TestHandlers struct {
+	energyPlantRepo  output.EnergyPlantRepositoryInterface
+	telegramNotifier *telegram.Notifier
+}
+
+// NewTestHandlers crea una nueva instancia de TestHandlers
+func NewTestHandlers(
+	energyPlantRepo output.EnergyPlantRepositoryInterface,
+	telegramNotifier *telegram.Notifier,
+) *TestHandlers {
+	return &TestHandlers{
+		energyPlantRepo:  energyPlantRepo,
+		telegramNotifier: telegramNotifier,
+	}
+}
+
 // TestIntake simula el procesamiento de un mensaje de Kafka para probar validaciones
 //
 // TestIntake godoc
@@ -47,7 +65,7 @@ type TestIntakeResponse struct {
 // @Failure      400  {object}  TestIntakeResponse
 // @Failure      404  {object}  TestIntakeResponse
 // @Router       /api/v1/test/intake [post]
-func TestIntake(c *container.Container) gin.HandlerFunc {
+func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		var req TestIntakeRequest
 		if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -62,7 +80,7 @@ func TestIntake(c *container.Container) gin.HandlerFunc {
 		// Validar que se proporcionó plant_source_id
 		if req.PlantSourceID == "" {
 			// Notificar campo faltante a Telegram
-			telegramErr := c.TelegramNotifier.SendValidationError(
+			telegramErr := h.telegramNotifier.SendValidationError(
 				"plant_source_id",
 				"campo ausente",
 				fmt.Sprintf("El campo plant_source_id no está presente en el mensaje. EventType: %s, PlantName: %s", req.EventType, req.PlantName),
@@ -81,7 +99,7 @@ func TestIntake(c *container.Container) gin.HandlerFunc {
 		plantSourceID, err := uuid.Parse(req.PlantSourceID)
 		if err != nil {
 			// Notificar error de UUID inválido a Telegram
-			telegramErr := c.TelegramNotifier.SendUUIDError(
+			telegramErr := h.telegramNotifier.SendUUIDError(
 				"plant_source_id",
 				req.PlantSourceID,
 				fmt.Sprintf("Error al parsear UUID: %v. EventType: %s, PlantName: %s", err, req.EventType, req.PlantName),
@@ -97,7 +115,7 @@ func TestIntake(c *container.Container) gin.HandlerFunc {
 		}
 
 		// Validar que la planta existe en la base de datos
-		exists, err := c.EnergyPlantRepository.Exists(plantSourceID)
+		exists, err := h.energyPlantRepo.Exists(plantSourceID)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, TestIntakeResponse{
 				Success: false,
@@ -109,7 +127,7 @@ func TestIntake(c *container.Container) gin.HandlerFunc {
 
 		if !exists {
 			// Notificar planta inexistente a Telegram
-			telegramErr := c.TelegramNotifier.SendValidationError(
+			telegramErr := h.telegramNotifier.SendValidationError(
 				"plant_source_id",
 				plantSourceID.String(),
 				fmt.Sprintf("La planta con ID %s no existe en la base de datos. EventType: %s, PlantName: %s", plantSourceID, req.EventType, req.PlantName),

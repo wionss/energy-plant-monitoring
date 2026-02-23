@@ -90,7 +90,9 @@ def plant_worker(producer: Producer, plant: dict, interval: float):
     while not stop_event.is_set():
         try:
             event = generate_event(plant)
-            key = str(uuid.uuid4())
+            # CAMBIO: Usar plant ID como partition key para garantizar orden por planta
+            # RAZÓN: Todos los eventos de la misma planta van a la misma partición
+            key = str(plant["id"])
             payload = json.dumps(event)
 
             # CAMBIO CLAVE: Agregamos callback=delivery_report

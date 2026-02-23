@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	domainerrors "monitoring-energy-service/internal/domain/errors"
@@ -17,19 +18,23 @@ const (
 )
 
 type KafkaService struct {
-	kafkaAdapter  output.KafkaAdapterInterface
-	topicHandlers map[string]input.MessageHandler
-	stopChan      chan struct{}
+	kafkaAdapter    output.KafkaAdapterInterface
+	topicHandlers   map[string]input.MessageHandler
+	stopChan        chan struct{}
+	consumerHealthy atomic.Bool // tracks consumer goroutine health
 }
 
 var _ input.KafkaServiceInterface = &KafkaService{}
 
 func NewKafkaService(adapter output.KafkaAdapterInterface) *KafkaService {
-	return &KafkaService{
+	ks := &KafkaService{
 		kafkaAdapter:  adapter,
 		topicHandlers: make(map[string]input.MessageHandler),
 		stopChan:      make(chan struct{}),
 	}
+	// Consumer starts as healthy by default
+	ks.consumerHealthy.Store(true)
+	return ks
 }
 
 func (ks *KafkaService) SendEvent(topic string, key string, event any) error {
@@ -91,6 +96,7 @@ func (ks *KafkaService) ConsumeEvents() {
 		select {
 		case <-ks.stopChan:
 			slog.Info("stopping Kafka event consumption")
+			ks.consumerHealthy.Store(false)
 			return
 		default:
 			kafkaMsg, err := ks.kafkaAdapter.ReadMessage()
@@ -100,16 +106,18 @@ func (ks *KafkaService) ConsumeEvents() {
 				if strings.Contains(err.Error(), "Disconnected") {
 					disconnectedCount++
 					if disconnectedCount > 10 {
-						slog.Error("disconnected from Kafka too many times, panicking")
-						panic("disconnected from kafka too many times")
+						slog.Error("disconnected from Kafka too many times, marking consumer as unhealthy and stopping")
+						ks.consumerHealthy.Store(false)
+						return
 					}
 				}
 
 				if strings.Contains(err.Error(), "Connection refused") {
 					connectionRefusedCount++
 					if connectionRefusedCount > 10 {
-						slog.Error("connection refused from Kafka too many times, panicking")
-						panic("connection refused from kafka too many times")
+						slog.Error("connection refused from Kafka too many times, marking consumer as unhealthy and stopping")
+						ks.consumerHealthy.Store(false)
+						return
 					}
 				}
 
@@ -212,6 +220,11 @@ func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []
 	)
 	ks.SendToDLQ(message, "max retries exhausted: "+err.Error())
 	return true // DLQ send is considered "handled"
+}
+
+// IsConsumerHealthy returns true if the Kafka consumer goroutine is running
+func (ks *KafkaService) IsConsumerHealthy() bool {
+	return ks.consumerHealthy.Load()
 }
 
 func (ks *KafkaService) StopConsuming() {

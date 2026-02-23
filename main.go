@@ -150,8 +150,12 @@ func main() {
 	// Swagger documentation
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	router.GET("/healthz", gin.WrapF(HealthCheck))
-	router.GET("/readyz", gin.WrapF(HealthCheck))
+	router.GET("/healthz", gin.WrapF(func(w http.ResponseWriter, r *http.Request) {
+		HealthCheck(w, r, c)
+	}))
+	router.GET("/readyz", gin.WrapF(func(w http.ResponseWriter, r *http.Request) {
+		HealthCheck(w, r, c)
+	}))
 
 	// Prometheus metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
@@ -199,6 +203,13 @@ func main() {
 	slog.Info("server exited gracefully")
 }
 
-func HealthCheck(w http.ResponseWriter, r *http.Request) {
+func HealthCheck(w http.ResponseWriter, r *http.Request, c *container.Container) {
+	// Check if Kafka consumer is healthy
+	if !c.KafkaService.IsConsumerHealthy() {
+		slog.Warn("health check failed: Kafka consumer is not healthy")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("kafka consumer unhealthy"))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }

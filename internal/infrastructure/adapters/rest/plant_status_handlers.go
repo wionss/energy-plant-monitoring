@@ -3,11 +3,23 @@ package rest
 import (
 	"net/http"
 
-	"monitoring-energy-service/internal/infrastructure/container"
+	"monitoring-energy-service/internal/domain/ports/output"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+// PlantStatusHandlers agrupa todos los handlers relacionados con el estado de plantas
+type PlantStatusHandlers struct {
+	plantStatusRepo output.PlantStatusRepositoryInterface
+}
+
+// NewPlantStatusHandlers crea una nueva instancia de PlantStatusHandlers
+func NewPlantStatusHandlers(plantStatusRepo output.PlantStatusRepositoryInterface) *PlantStatusHandlers {
+	return &PlantStatusHandlers{
+		plantStatusRepo: plantStatusRepo,
+	}
+}
 
 // ListPlantStatus returns the current status of all plants (Digital Twin)
 // @Summary List current status of all plants
@@ -17,9 +29,9 @@ import (
 // @Success 200 {array} entities.PlantCurrentStatus
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/plants/status [get]
-func ListPlantStatus(c *container.Container) gin.HandlerFunc {
+func (h *PlantStatusHandlers) ListPlantStatus() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		statuses, err := c.PlantStatusRepository.GetAll()
+		statuses, err := h.plantStatusRepo.GetAll()
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -39,7 +51,7 @@ func ListPlantStatus(c *container.Container) gin.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/plants/status/{id} [get]
-func GetPlantStatus(c *container.Container) gin.HandlerFunc {
+func (h *PlantStatusHandlers) GetPlantStatus() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		idStr := ctx.Param("id")
 		id, err := uuid.Parse(idStr)
@@ -48,7 +60,7 @@ func GetPlantStatus(c *container.Container) gin.HandlerFunc {
 			return
 		}
 
-		status, err := c.PlantStatusRepository.GetByPlantID(id)
+		status, err := h.plantStatusRepo.GetByPlantID(id)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -72,11 +84,11 @@ func GetPlantStatus(c *container.Container) gin.HandlerFunc {
 // @Success 200 {array} entities.PlantCurrentStatus
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/plants/status/filter/{status} [get]
-func ListPlantStatusByStatus(c *container.Container) gin.HandlerFunc {
+func (h *PlantStatusHandlers) ListPlantStatusByStatus() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		statusFilter := ctx.Param("status")
 
-		statuses, err := c.PlantStatusRepository.GetByStatus(statusFilter)
+		statuses, err := h.plantStatusRepo.GetByStatus(statusFilter)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

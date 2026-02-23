@@ -58,9 +58,9 @@ def generate_backfill_event():
 def produce_load(producer, num_events):
     for _ in range(num_events):
         event = generate_backfill_event()
-        # Usamos timestamp como key para que Kafka posiblemente distribuya mejor, 
-        # aunque randomUUID es mejor para balanceo de particiones
-        key = str(uuid.uuid4()) 
+        # CAMBIO: Usar plant_source_id como partition key para garantizar orden por planta
+        # RAZÓN: Todos los eventos de la misma planta van a la misma partición
+        key = str(event['plant_source_id'])
         payload = json.dumps(event)
         
         try:

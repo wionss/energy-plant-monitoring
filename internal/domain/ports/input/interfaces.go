@@ -18,6 +18,7 @@ type KafkaServiceInterface interface {
 	ConsumeEvents()
 	StopConsuming()
 	SendToDLQ(message []byte, reason string)
+	IsConsumerHealthy() bool
 }
 
 // ExampleServiceInterface defines the contract for example business logic
