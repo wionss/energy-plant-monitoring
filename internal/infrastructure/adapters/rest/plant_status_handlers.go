@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"log/slog"
 	"net/http"
 
 	"monitoring-energy-service/internal/domain/ports/output"
@@ -31,9 +32,10 @@ func NewPlantStatusHandlers(plantStatusRepo output.PlantStatusRepositoryInterfac
 // @Router /api/v1/plants/status [get]
 func (h *PlantStatusHandlers) ListPlantStatus() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		statuses, err := h.plantStatusRepo.GetAll()
+		statuses, err := h.plantStatusRepo.GetAll(ctx.Request.Context())
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusOK, statuses)
@@ -60,9 +62,10 @@ func (h *PlantStatusHandlers) GetPlantStatus() gin.HandlerFunc {
 			return
 		}
 
-		status, err := h.plantStatusRepo.GetByPlantID(id)
+		status, err := h.plantStatusRepo.GetByPlantID(ctx.Request.Context(), id)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 
@@ -88,9 +91,10 @@ func (h *PlantStatusHandlers) ListPlantStatusByStatus() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		statusFilter := ctx.Param("status")
 
-		statuses, err := h.plantStatusRepo.GetByStatus(statusFilter)
+		statuses, err := h.plantStatusRepo.GetByStatus(ctx.Request.Context(), statusFilter)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 

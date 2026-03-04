@@ -1,6 +1,8 @@
 package input
 
 import (
+	"context"
+
 	"monitoring-energy-service/internal/domain/entities"
 
 	"github.com/google/uuid"
@@ -8,7 +10,7 @@ import (
 
 // MessageHandler is the interface for handling Kafka messages
 type MessageHandler interface {
-	HandleMessage(message []byte) error
+	HandleMessage(ctx context.Context, message []byte) error
 }
 
 // KafkaServiceInterface defines the contract for Kafka operations

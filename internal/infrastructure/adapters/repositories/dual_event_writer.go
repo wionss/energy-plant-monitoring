@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"monitoring-energy-service/internal/domain/entities"
 	"monitoring-energy-service/internal/domain/ports/output"
 
+	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -143,17 +145,17 @@ func (w *DualEventWriter) SetSpilloverFunc(fn SpilloverFunc) {
 }
 
 // SaveEvent performs a synchronous write to both tables (for backwards compatibility).
-func (w *DualEventWriter) SaveEvent(op *entities.EventOperational, an *entities.EventAnalytical) error {
+func (w *DualEventWriter) SaveEvent(ctx context.Context, op *entities.EventOperational, an *entities.EventAnalytical) error {
 	// Write to operational table
 	opModel := ToEventOperationalModel(op)
-	if err := w.db.Clauses(clause.OnConflict{DoNothing: true}).Create(opModel).Error; err != nil {
+	if err := w.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(opModel).Error; err != nil {
 		slog.Error("failed to write to operational", "error", err, "event_id", op.ID)
 		return err
 	}
 
 	// Write to analytical table
 	anModel := ToEventAnalyticalModel(an)
-	if err := w.db.Clauses(clause.OnConflict{DoNothing: true}).Create(anModel).Error; err != nil {
+	if err := w.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(anModel).Error; err != nil {
 		slog.Error("failed to write to analytical", "error", err, "event_id", an.ID)
 		return err
 	}
@@ -348,30 +350,158 @@ func (w *DualEventWriter) analyticalWorker(id int) {
 	}
 }
 
-// copyOperationalBatch intenta usar pgx.CopyFrom para escribir eventos operacionales
-// Si no está disponible, retorna a GORM.CreateInBatches para mejor performance
-// que reflection: menos CPU y memoria para tablas append-only
+// acquirePgxConn obtains a *pgx.Conn from the GORM *sql.DB via sql.Conn.Raw().
+// The caller must call sqlConn.Close() when done to return it to the pool.
+func (w *DualEventWriter) acquirePgxConn(ctx context.Context) (*pgx.Conn, interface{ Close() error }, error) {
+	sqlDB, err := w.db.DB()
+	if err != nil {
+		return nil, nil, err
+	}
+	sqlConn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var pgxConn *pgx.Conn
+	if rawErr := sqlConn.Raw(func(driverConn any) error {
+		type pgxGetter interface{ Conn() *pgx.Conn }
+		if c, ok := driverConn.(pgxGetter); ok {
+			pgxConn = c.Conn()
+			return nil
+		}
+		return fmt.Errorf("driver conn is %T, not a pgx conn", driverConn)
+	}); rawErr != nil {
+		sqlConn.Close()
+		return nil, nil, rawErr
+	}
+	return pgxConn, sqlConn, nil
+}
+
+// copyOperationalBatch writes a batch of operational events using pgx.CopyFrom for ~10x
+// throughput over GORM. Falls back to GORM CreateInBatches on any connection error.
 func (w *DualEventWriter) copyOperationalBatch(models []*EventOperationalModel) error {
 	if len(models) == 0 {
 		return nil
 	}
+	ctx := context.Background()
 
-	// Por ahora, usar GORM con ON CONFLICT DO NOTHING
-	// En futuro: extraer conexión pgx directamente si usas pgxpool en lugar de gorm
-	// Esto sigue siendo mucho más eficiente que el default de GORM
-	return w.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(models, batchSize).Error
+	pgxConn, sqlConn, err := w.acquirePgxConn(ctx)
+	if err != nil {
+		return w.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(models, batchSize).Error
+	}
+	defer sqlConn.Close()
+
+	tx, err := pgxConn.Begin(ctx)
+	if err != nil {
+		return w.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(models, batchSize).Error
+	}
+
+	var txErr error
+	defer func() {
+		if txErr != nil {
+			tx.Rollback(ctx)
+		}
+	}()
+
+	_, txErr = tx.Exec(ctx, `CREATE TEMP TABLE IF NOT EXISTS _op_batch (
+		id UUID, event_type VARCHAR(100), plant_source_id UUID,
+		source VARCHAR(255), data JSONB, metadata JSONB, created_at TIMESTAMPTZ
+	) ON COMMIT DELETE ROWS`)
+	if txErr != nil {
+		return fmt.Errorf("pgx create temp: %w", txErr)
+	}
+
+	rows := make([][]any, len(models))
+	for i, m := range models {
+		var metadata any
+		if len(m.Metadata) > 0 {
+			metadata = []byte(m.Metadata)
+		}
+		rows[i] = []any{m.ID.String(), m.EventType, m.PlantSourceId.String(),
+			m.Source, []byte(m.Data), metadata, m.CreatedAt}
+	}
+
+	_, txErr = tx.CopyFrom(ctx, pgx.Identifier{"_op_batch"},
+		[]string{"id", "event_type", "plant_source_id", "source", "data", "metadata", "created_at"},
+		pgx.CopyFromRows(rows))
+	if txErr != nil {
+		return fmt.Errorf("pgx CopyFrom operational: %w", txErr)
+	}
+
+	_, txErr = tx.Exec(ctx, `
+		INSERT INTO operational.events_std
+			(id, event_type, plant_source_id, source, data, metadata, created_at)
+		SELECT id, event_type, plant_source_id, source, data, metadata, created_at
+		FROM _op_batch ON CONFLICT (id) DO NOTHING`)
+	if txErr != nil {
+		return fmt.Errorf("pgx insert operational: %w", txErr)
+	}
+
+	txErr = tx.Commit(ctx)
+	return txErr
 }
 
-// copyAnalyticalBatch intenta usar pgx.CopyFrom para escribir eventos analíticos
-// Si no está disponible, retorna a GORM.CreateInBatches
+// copyAnalyticalBatch writes a batch of analytical events using pgx.CopyFrom.
+// Falls back to GORM CreateInBatches on any connection error.
 func (w *DualEventWriter) copyAnalyticalBatch(models []*EventAnalyticalModel) error {
 	if len(models) == 0 {
 		return nil
 	}
+	ctx := context.Background()
 
-	// Por ahora, usar GORM con ON CONFLICT DO NOTHING
-	// En futuro: extraer conexión pgx directamente si usas pgxpool en lugar de gorm
-	return w.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(models, batchSize).Error
+	pgxConn, sqlConn, err := w.acquirePgxConn(ctx)
+	if err != nil {
+		return w.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(models, batchSize).Error
+	}
+	defer sqlConn.Close()
+
+	tx, err := pgxConn.Begin(ctx)
+	if err != nil {
+		return w.db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(models, batchSize).Error
+	}
+
+	var txErr error
+	defer func() {
+		if txErr != nil {
+			tx.Rollback(ctx)
+		}
+	}()
+
+	_, txErr = tx.Exec(ctx, `CREATE TEMP TABLE IF NOT EXISTS _an_batch (
+		created_at TIMESTAMPTZ, id UUID, event_type VARCHAR(100), plant_source_id UUID,
+		source VARCHAR(255), data JSONB, metadata JSONB
+	) ON COMMIT DELETE ROWS`)
+	if txErr != nil {
+		return fmt.Errorf("pgx create temp analytical: %w", txErr)
+	}
+
+	rows := make([][]any, len(models))
+	for i, m := range models {
+		var metadata any
+		if len(m.Metadata) > 0 {
+			metadata = []byte(m.Metadata)
+		}
+		rows[i] = []any{m.CreatedAt, m.ID.String(), m.EventType, m.PlantSourceId.String(),
+			m.Source, []byte(m.Data), metadata}
+	}
+
+	_, txErr = tx.CopyFrom(ctx, pgx.Identifier{"_an_batch"},
+		[]string{"created_at", "id", "event_type", "plant_source_id", "source", "data", "metadata"},
+		pgx.CopyFromRows(rows))
+	if txErr != nil {
+		return fmt.Errorf("pgx CopyFrom analytical: %w", txErr)
+	}
+
+	_, txErr = tx.Exec(ctx, `
+		INSERT INTO analytical.events_ts
+			(created_at, id, event_type, plant_source_id, source, data, metadata)
+		SELECT created_at, id, event_type, plant_source_id, source, data, metadata
+		FROM _an_batch ON CONFLICT (created_at, id) DO NOTHING`)
+	if txErr != nil {
+		return fmt.Errorf("pgx insert analytical: %w", txErr)
+	}
+
+	txErr = tx.Commit(ctx)
+	return txErr
 }
 
 // metricsReporter logs throughput metrics periodically.

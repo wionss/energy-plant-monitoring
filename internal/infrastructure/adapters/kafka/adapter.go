@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"log/slog"
+	"time"
 
 	"monitoring-energy-service/internal/domain/ports/output"
 	"monitoring-energy-service/internal/infrastructure/conf/kafkaconf"
@@ -16,11 +17,19 @@ type KafkaAdapter struct {
 
 var _ output.KafkaAdapterInterface = &KafkaAdapter{}
 
-func NewKafkaAdapter(factory *kafkaconf.KafkaFactory, groupID string) *KafkaAdapter {
-	return &KafkaAdapter{
-		producer: factory.NewProducer(),
-		consumer: factory.NewConsumer(groupID),
+func NewKafkaAdapter(factory *kafkaconf.KafkaFactory, groupID string) (*KafkaAdapter, error) {
+	producer, err := factory.NewProducer()
+	if err != nil {
+		return nil, err
 	}
+	consumer, err := factory.NewConsumer(groupID)
+	if err != nil {
+		return nil, err
+	}
+	return &KafkaAdapter{
+		producer: producer,
+		consumer: consumer,
+	}, nil
 }
 
 func (ka *KafkaAdapter) SubscribeTopics(topics []string) error {
@@ -28,23 +37,29 @@ func (ka *KafkaAdapter) SubscribeTopics(topics []string) error {
 }
 
 func (ka *KafkaAdapter) SendMessage(topic, key string, message []byte) error {
+	deliveryChan := make(chan kafka.Event, 1)
+
 	err := ka.producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
 		Key:            []byte(key),
 		Value:          message,
-	}, nil)
+	}, deliveryChan)
 	if err != nil {
 		return err
 	}
 
-	ka.producer.Flush(15 * 1000)
+	e := <-deliveryChan
+	m := e.(*kafka.Message)
+	if m.TopicPartition.Error != nil {
+		return m.TopicPartition.Error
+	}
 
 	return nil
 }
 
 // ReadMessage reads the next message from Kafka and returns it with metadata for manual commit.
 func (ka *KafkaAdapter) ReadMessage() (*output.KafkaMessage, error) {
-	msg, err := ka.consumer.ReadMessage(-1)
+	msg, err := ka.consumer.ReadMessage(5 * time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +70,15 @@ func (ka *KafkaAdapter) ReadMessage() (*output.KafkaMessage, error) {
 		Partition: msg.TopicPartition.Partition,
 		Offset:    int64(msg.TopicPartition.Offset),
 	}, nil
+}
+
+// Close flushes pending producer messages and closes consumer/producer connections.
+func (ka *KafkaAdapter) Close() {
+	ka.producer.Flush(30000)
+	ka.producer.Close()
+	if err := ka.consumer.Close(); err != nil {
+		slog.Error("failed to close Kafka consumer", "error", err)
+	}
 }
 
 // CommitMessage manually commits the offset for the given message.

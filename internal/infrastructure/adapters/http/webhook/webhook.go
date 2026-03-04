@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -42,6 +43,7 @@ func (a *Adapter) SendPayload(url string, payload any) error {
 		return fmt.Errorf("error sending webhook request: %w", err)
 	}
 	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck // drain to allow connection reuse
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)

@@ -11,7 +11,9 @@ package rest
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	domainerrors "monitoring-energy-service/internal/domain/errors"
@@ -55,12 +57,24 @@ func NewEventHandlers(
 // @Router       /api/v1/events [get]
 func (h *EventHandlers) ListEvents() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		events, err := h.eventRepo.FindAll()
+		limit, _ := strconv.Atoi(ctx.Query("limit"))
+		q := output.PageQuery{Limit: limit}
+		if after := ctx.Query("after"); after != "" {
+			cursor, err := output.DecodeCursor(after)
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+				return
+			}
+			q.Cursor = cursor
+		}
+
+		page, err := h.eventRepo.FindAll(ctx.Request.Context(), q)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
-		ctx.JSON(http.StatusOK, events)
+		ctx.JSON(http.StatusOK, page)
 	}
 }
 
@@ -86,7 +100,7 @@ func (h *EventHandlers) GetEvent() gin.HandlerFunc {
 			return
 		}
 
-		event, err := h.eventRepo.FindByID(id)
+		event, err := h.eventRepo.FindByID(ctx.Request.Context(), id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
@@ -115,12 +129,24 @@ func (h *EventHandlers) GetEventsByType() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		eventType := ctx.Param("type")
 
-		events, err := h.eventRepo.FindByEventType(eventType)
+		limit, _ := strconv.Atoi(ctx.Query("limit"))
+		q := output.PageQuery{Limit: limit}
+		if after := ctx.Query("after"); after != "" {
+			cursor, err := output.DecodeCursor(after)
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+				return
+			}
+			q.Cursor = cursor
+		}
+
+		page, err := h.eventRepo.FindByEventType(ctx.Request.Context(), eventType, q)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
-		ctx.JSON(http.StatusOK, events)
+		ctx.JSON(http.StatusOK, page)
 	}
 }
 
@@ -141,12 +167,24 @@ func (h *EventHandlers) GetEventsByType() gin.HandlerFunc {
 // @Router       /api/v1/events/operational [get]
 func (h *EventHandlers) ListOperationalEvents() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		events, err := h.eventOpRepo.FindAll()
+		limit, _ := strconv.Atoi(ctx.Query("limit"))
+		q := output.PageQuery{Limit: limit}
+		if after := ctx.Query("after"); after != "" {
+			cursor, err := output.DecodeCursor(after)
+			if err != nil {
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+				return
+			}
+			q.Cursor = cursor
+		}
+
+		page, err := h.eventOpRepo.FindAll(ctx.Request.Context(), q)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
-		ctx.JSON(http.StatusOK, events)
+		ctx.JSON(http.StatusOK, page)
 	}
 }
 
@@ -172,7 +210,7 @@ func (h *EventHandlers) GetOperationalEvent() gin.HandlerFunc {
 			return
 		}
 
-		event, err := h.eventOpRepo.FindByID(id)
+		event, err := h.eventOpRepo.FindByID(ctx.Request.Context(), id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
@@ -225,9 +263,10 @@ func (h *EventHandlers) ListAnalyticalEvents() gin.HandlerFunc {
 			return
 		}
 
-		events, err := h.eventAnRepo.FindByTimeRange(start, end)
+		events, err := h.eventAnRepo.FindByTimeRange(ctx.Request.Context(), start, end)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusOK, events)
@@ -278,9 +317,10 @@ func (h *EventHandlers) GetHourlyAggregation() gin.HandlerFunc {
 			return
 		}
 
-		results, err := h.eventAnRepo.GetHourlyAggregation(plantId, start, end)
+		results, err := h.eventAnRepo.GetHourlyAggregation(ctx.Request.Context(), plantId, start, end)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusOK, results)
@@ -331,9 +371,10 @@ func (h *EventHandlers) GetDailyAggregation() gin.HandlerFunc {
 			return
 		}
 
-		results, err := h.eventAnRepo.GetDailyAggregation(plantId, start, end)
+		results, err := h.eventAnRepo.GetDailyAggregation(ctx.Request.Context(), plantId, start, end)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusOK, results)

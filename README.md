@@ -269,8 +269,7 @@ TELEGRAM_CHAT_ID=your_chat_id_here
 HTTP_CLIENT_TIMEOUT=30
 
 # CORS
-ALLOWED_CORS_SUFFIXES=.spotcloud.io
-```
+ALLOWED_CORS_SUFFIXES=.jdc.io```
 
 ## Hexagonal Architecture
 

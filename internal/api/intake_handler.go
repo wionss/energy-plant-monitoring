@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 
@@ -28,7 +29,7 @@ func NewIntakeHandler(ingestionService *services.EventIngestionService) *IntakeH
 }
 
 // HandleMessage deserializa el evento y lo procesa a través del servicio de dominio
-func (h *IntakeHandler) HandleMessage(message []byte) error {
+func (h *IntakeHandler) HandleMessage(ctx context.Context, message []byte) error {
 	// Deserializar el JSON
 	var data map[string]interface{}
 	if err := json.Unmarshal(message, &data); err != nil {
@@ -38,5 +39,5 @@ func (h *IntakeHandler) HandleMessage(message []byte) error {
 	}
 
 	// Delegar toda la lógica de negocio al servicio
-	return h.ingestionService.ProcessEvent(message, data)
+	return h.ingestionService.ProcessEvent(ctx, message, data)
 }

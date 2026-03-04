@@ -22,7 +22,7 @@ type Config struct {
 	WebhookUrl     string `env:"WEBHOOK_URL"`
 
 	// CORS
-	AllowedCorsSuffixes string `env:"ALLOWED_CORS_SUFFIXES" envDefault:".spotcloud.io"`
+	AllowedCorsSuffixes string `env:"ALLOWED_CORS_SUFFIXES" envDefault:".JDC.io"`
 
 	// Telegram Notifications
 	TelegramEnabled  bool   `env:"TELEGRAM_ENABLED" envDefault:"false"`

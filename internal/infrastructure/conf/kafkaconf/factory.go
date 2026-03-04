@@ -34,7 +34,7 @@ func NewKafkaFactory(brokers []string, autoOffset string) *KafkaFactory {
 	}
 }
 
-func (kf *KafkaFactory) NewProducer() *kafka.Producer {
+func (kf *KafkaFactory) NewProducer() (*kafka.Producer, error) {
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers": kf.brokerList,
 		"retries":           1,
@@ -43,15 +43,15 @@ func (kf *KafkaFactory) NewProducer() *kafka.Producer {
 
 	if err != nil {
 		slog.Error("failed to create Kafka producer", "error", err)
-		panic("failed to create Kafka producer: " + err.Error())
+		return nil, err
 	}
 
 	go deliveryReport(p.Events())
 
-	return p
+	return p, nil
 }
 
-func (kf *KafkaFactory) NewConsumer(groupID string) *kafka.Consumer {
+func (kf *KafkaFactory) NewConsumer(groupID string) (*kafka.Consumer, error) {
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers":     kf.brokerList,
 		"group.id":              groupID,
@@ -65,7 +65,7 @@ func (kf *KafkaFactory) NewConsumer(groupID string) *kafka.Consumer {
 	})
 	if err != nil {
 		slog.Error("failed to create Kafka consumer", "error", err)
-		panic("failed to create Kafka consumer: " + err.Error())
+		return nil, err
 	}
-	return c
+	return c, nil
 }

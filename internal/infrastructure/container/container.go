@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -24,6 +25,7 @@ type Container struct {
 	db                    *gorm.DB
 	cfg                   conf.Config
 	KafkaService          input.KafkaServiceInterface
+	kafkaAdapter          output.KafkaAdapterInterface
 	WebhookAdapter        output.WebhookAdapterInterface
 	ExampleRepository     output.ExampleRepositoryInterface
 	EventRepository       output.EventRepositoryInterface
@@ -43,7 +45,7 @@ func NewContainer(
 	httpClient *http.Client,
 	autoOffset string,
 	opts ...ContainerOption,
-) *Container {
+) (*Container, error) {
 	container := &Container{db: db}
 
 	for _, opt := range opts {
@@ -71,9 +73,13 @@ func NewContainer(
 
 	// Initialize Kafka first (needed for spillover callback)
 	kafkaFactory := kafkaconf.NewKafkaFactory(kafkaBrokers, autoOffset)
-	kafkaAdapter := kafka.NewKafkaAdapter(kafkaFactory, consumerGroup)
+	kafkaAdapter, err := kafka.NewKafkaAdapter(kafkaFactory, consumerGroup)
+	if err != nil {
+		return nil, err
+	}
 	kafkaService := api.NewKafkaService(kafkaAdapter)
 	container.KafkaService = kafkaService
+	container.kafkaAdapter = kafkaAdapter
 
 	// Initialize DualEventWriter with spillover callback wired to Kafka DLQ
 	dualWriter := repositories.NewDualEventWriterWithConfig(db, repositories.DualEventWriterConfig{
@@ -129,7 +135,7 @@ func NewContainer(
 	intakeHandler := api.NewIntakeHandler(eventIngestionService)
 	kafkaService.RegisterHandler(container.cfg.ConsumerTopic, intakeHandler)
 
-	return container
+	return container, nil
 }
 
 func WithConfig(config conf.Config) ContainerOption {
@@ -142,13 +148,22 @@ func (c *Container) GetConfig() conf.Config {
 	return c.cfg
 }
 
+func (c *Container) Ping(ctx context.Context) error {
+	sqlDB, err := c.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+}
+
 // Shutdown performs an ordered shutdown of all components.
 func (c *Container) Shutdown() {
 	slog.Info("shutting down application components")
 
-	// 1. Stop Kafka consumer
+	// 1. Stop Kafka consumer then close producer/consumer connections
 	slog.Info("stopping Kafka consumer")
 	c.KafkaService.StopConsuming()
+	c.kafkaAdapter.Close()
 
 	// 2. Stop analytics coordinator
 	slog.Info("stopping analytics coordinator")

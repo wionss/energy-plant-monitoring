@@ -11,7 +11,10 @@ import (
 // CAMBIO: Refactorizado para inyectar dependencias directamente en los handlers
 // RAZÓN: Elimina el anti-patrón Service Locator (pasar el container completo)
 func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
+	rateLimiter := NewRateLimiter()
+
 	api := router.Group("/api/v1")
+	api.Use(RequestIDMiddleware(), rateLimiter.Middleware())
 	{
 		// Inicializar handlers con sus dependencias específicas
 		exampleHandlers := NewExampleHandlers(c.ExampleRepository)
