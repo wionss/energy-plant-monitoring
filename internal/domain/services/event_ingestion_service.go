@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"monitoring-energy-service/internal/domain/ports/output"
 	"monitoring-energy-service/internal/infrastructure/adapters/metrics"
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
+	"monitoring-energy-service/internal/infrastructure/tracing"
 
 	"github.com/google/uuid"
 )
@@ -58,12 +60,13 @@ func deterministicID(payload []byte) uuid.UUID {
 
 // ProcessEvent es el punto de entrada principal del servicio
 // Orquesta todas las validaciones, transformaciones y persistencias
-func (s *EventIngestionService) ProcessEvent(payload []byte, data map[string]interface{}) error {
+func (s *EventIngestionService) ProcessEvent(ctx context.Context, payload []byte, data map[string]interface{}) error {
 	startTime := time.Now()
+	log := tracing.Logger(ctx)
 
 	// Validar estructura básica del JSON
 	if data == nil || len(data) == 0 {
-		slog.Error("empty event data")
+		log.Error("empty event data")
 		metrics.EventsValidationErrors.WithLabelValues("empty_data").Inc()
 		return domainerrors.NewPermanentError("empty event data", nil)
 	}
@@ -75,7 +78,7 @@ func (s *EventIngestionService) ProcessEvent(payload []byte, data map[string]int
 	}
 
 	// Validar que la planta existe en BD
-	if err := s.validatePlantExists(plantSourceId); err != nil {
+	if err := s.validatePlantExists(ctx, plantSourceId); err != nil {
 		return err
 	}
 
@@ -91,12 +94,12 @@ func (s *EventIngestionService) ProcessEvent(payload []byte, data map[string]int
 	}
 
 	// Persistir eventos en BD
-	if err := s.persistEvents(eventOp, eventAn); err != nil {
+	if err := s.persistEvents(ctx, eventOp, eventAn); err != nil {
 		return err
 	}
 
 	// Actualizar Digital Twin (estado actual de planta)
-	s.updatePlantStatus(plantSourceId, eventType, source, payload, data)
+	s.updatePlantStatus(ctx, plantSourceId, eventType, source, payload, data)
 
 	// Paso 4: Evaluar alertas en tiempo real (asincronamente para no bloquear)
 	// Las alertas se envían asincronamente a través de Telegram sin bloquear el evento principal
@@ -106,7 +109,7 @@ func (s *EventIngestionService) ProcessEvent(payload []byte, data map[string]int
 			plantName = pn
 		}
 
-		go s.alertEvaluator.EvaluateEvent(
+		s.alertEvaluator.EvaluateEvent(
 			eventOp.ID.String(),
 			eventType,
 			plantSourceId.String(),
@@ -164,10 +167,11 @@ func (s *EventIngestionService) extractAndValidatePlantInfo(data map[string]inte
 }
 
 // validatePlantExists verifica que la planta existe en la BD
-func (s *EventIngestionService) validatePlantExists(plantSourceId uuid.UUID) error {
-	exists, err := s.energyPlantRepository.Exists(plantSourceId)
+func (s *EventIngestionService) validatePlantExists(ctx context.Context, plantSourceId uuid.UUID) error {
+	log := tracing.Logger(ctx)
+	exists, err := s.energyPlantRepository.Exists(ctx, plantSourceId)
 	if err != nil {
-		slog.Error("failed to validate plant existence",
+		log.Error("failed to validate plant existence",
 			"plant_source_id", plantSourceId,
 			"error", err,
 		)
@@ -176,7 +180,7 @@ func (s *EventIngestionService) validatePlantExists(plantSourceId uuid.UUID) err
 	}
 
 	if !exists {
-		slog.Error("plant does not exist", "plant_source_id", plantSourceId)
+		log.Error("plant does not exist", "plant_source_id", plantSourceId)
 		metrics.EventsValidationErrors.WithLabelValues("plant_not_found").Inc()
 		s.telegramNotifier.SendValidationError(
 			"plant_source_id",
@@ -188,7 +192,7 @@ func (s *EventIngestionService) validatePlantExists(plantSourceId uuid.UUID) err
 		)
 	}
 
-	slog.Info("plant validated", "plant_source_id", plantSourceId)
+	log.Info("plant validated", "plant_source_id", plantSourceId)
 	return nil
 }
 
@@ -266,23 +270,25 @@ func (s *EventIngestionService) buildEventEntities(
 
 // persistEvents persiste los eventos en BD
 func (s *EventIngestionService) persistEvents(
+	ctx context.Context,
 	eventOp *entities.EventOperational,
 	eventAn *entities.EventAnalytical,
 ) error {
+	log := tracing.Logger(ctx)
 	if s.useAsyncWrite {
 		if err := s.dualWriter.SaveEventAsync(eventOp, eventAn); err != nil {
-			slog.Error("error saving event async", "error", err)
+			log.Error("error saving event async", "error", err)
 			metrics.EventsIngestedTotal.WithLabelValues(eventOp.EventType, eventOp.PlantSourceId.String(), "failed").Inc()
 			return domainerrors.NewTransientError("async save failed", err)
 		}
-		slog.Info("event enqueued for async save", "id", eventOp.ID, "type", eventOp.EventType)
+		log.Info("event enqueued for async save", "id", eventOp.ID, "type", eventOp.EventType)
 	} else {
-		if err := s.dualWriter.SaveEvent(eventOp, eventAn); err != nil {
-			slog.Error("error saving event to database", "error", err)
+		if err := s.dualWriter.SaveEvent(ctx, eventOp, eventAn); err != nil {
+			log.Error("error saving event to database", "error", err)
 			metrics.EventsIngestedTotal.WithLabelValues(eventOp.EventType, eventOp.PlantSourceId.String(), "failed").Inc()
 			return domainerrors.NewTransientError("sync save failed", err)
 		}
-		slog.Info("event saved to both tables", "id", eventOp.ID, "type", eventOp.EventType)
+		log.Info("event saved to both tables", "id", eventOp.ID, "type", eventOp.EventType)
 	}
 	return nil
 }
@@ -290,6 +296,7 @@ func (s *EventIngestionService) persistEvents(
 // updatePlantStatus actualiza el Digital Twin (estado actual de planta)
 // No-blocking: errores aquí no fallan el procesamiento del evento
 func (s *EventIngestionService) updatePlantStatus(
+	ctx context.Context,
 	plantSourceId uuid.UUID,
 	eventType string,
 	source string,
@@ -314,7 +321,7 @@ func (s *EventIngestionService) updatePlantStatus(
 		UpdatedAt:     time.Now(),
 	}
 
-	if err := s.plantStatusRepository.Upsert(plantStatus); err != nil {
+	if err := s.plantStatusRepository.Upsert(ctx, plantStatus); err != nil {
 		slog.Error("failed to update plant current status",
 			"plant_source_id", plantSourceId,
 			"error", err,

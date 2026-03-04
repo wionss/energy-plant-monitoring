@@ -1,30 +1,15 @@
 -- +goose Up
--- Paso 8: Data Retention Policy
--- Prevents unlimited disk growth by automatically removing old event data
-
--- Add 30-day retention policy to analytical events hypertable
--- This is safe because hourly_plant_stats captures aggregations before deletion
+-- La política de retención SOLO funciona en hypertables.
+-- Aplicamos la retención a la tabla analítica (por ejemplo, borrar datos con más de 90 o 30 días)
 SELECT add_retention_policy(
     'analytical.events_ts',
-    INTERVAL '30 days',
-    if_not_exists => true
-) AS policy_id;
-
--- Add 90-day retention policy to operational events (more data)
-SELECT add_retention_policy(
-    'operational.events_std',
     INTERVAL '90 days',
     if_not_exists => true
-) AS policy_id;
+);
+
+-- Si aplicaste la "Opción 1" de la respuesta anterior y creaste el continuous aggregate,
+-- también puedes ponerle política de retención a esa vista (opcional):
+-- SELECT add_retention_policy('analytical.events_hourly_agg', INTERVAL '180 days', if_not_exists => true);
 
 -- +goose Down
--- Remove retention policies if this migration is rolled back
-SELECT remove_retention_policy(
-    'analytical.events_ts',
-    if_exists => true
-);
-
-SELECT remove_retention_policy(
-    'operational.events_std',
-    if_exists => true
-);
+SELECT remove_retention_policy('analytical.events_ts', if_exists => true);

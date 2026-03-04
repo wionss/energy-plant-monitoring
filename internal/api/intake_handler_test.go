@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
 
 	"monitoring-energy-service/internal/domain/entities"
 	domainerrors "monitoring-energy-service/internal/domain/errors"
+	"monitoring-energy-service/internal/domain/services"
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 
 	"github.com/google/uuid"
@@ -25,7 +27,7 @@ type mockDualEventWriter struct {
 	saveErr              error
 }
 
-func (m *mockDualEventWriter) SaveEvent(op *entities.EventOperational, an *entities.EventAnalytical) error {
+func (m *mockDualEventWriter) SaveEvent(ctx context.Context, op *entities.EventOperational, an *entities.EventAnalytical) error {
 	m.saveEventCalled = true
 	m.savedOp = op
 	m.savedAn = an
@@ -49,11 +51,11 @@ type mockEnergyPlantRepo struct {
 	findErr      error
 }
 
-func (m *mockEnergyPlantRepo) FindByID(id uuid.UUID) (*entities.EnergyPlants, error) {
+func (m *mockEnergyPlantRepo) FindByID(ctx context.Context, id uuid.UUID) (*entities.EnergyPlants, error) {
 	return m.findResult, m.findErr
 }
 
-func (m *mockEnergyPlantRepo) Exists(id uuid.UUID) (bool, error) {
+func (m *mockEnergyPlantRepo) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
 	return m.existsResult, m.existsErr
 }
 
@@ -63,20 +65,20 @@ type mockPlantStatusRepo struct {
 	upsertErr    error
 }
 
-func (m *mockPlantStatusRepo) Upsert(status *entities.PlantCurrentStatus) error {
+func (m *mockPlantStatusRepo) Upsert(ctx context.Context, status *entities.PlantCurrentStatus) error {
 	m.upsertCalled = true
 	return m.upsertErr
 }
 
-func (m *mockPlantStatusRepo) GetByPlantID(plantID uuid.UUID) (*entities.PlantCurrentStatus, error) {
+func (m *mockPlantStatusRepo) GetByPlantID(ctx context.Context, plantID uuid.UUID) (*entities.PlantCurrentStatus, error) {
 	return nil, nil
 }
 
-func (m *mockPlantStatusRepo) GetAll() ([]*entities.PlantCurrentStatus, error) {
+func (m *mockPlantStatusRepo) GetAll(ctx context.Context) ([]*entities.PlantCurrentStatus, error) {
 	return nil, nil
 }
 
-func (m *mockPlantStatusRepo) GetByStatus(status string) ([]*entities.PlantCurrentStatus, error) {
+func (m *mockPlantStatusRepo) GetByStatus(ctx context.Context, status string) ([]*entities.PlantCurrentStatus, error) {
 	return nil, nil
 }
 
@@ -86,9 +88,9 @@ var testPlantID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 func validMessage() []byte {
 	msg := map[string]any{
-		"event_type":      "power_reading",
-		"plant_name":      "Solar Farm Alpha",
-		"plant_source_id": testPlantID.String(),
+		"event_type":          "power_reading",
+		"plant_name":          "Solar Farm Alpha",
+		"plant_source_id":     testPlantID.String(),
 		"power_generated_mw":  50.5,
 		"power_consumed_mw":   10.2,
 		"efficiency_percent":  85.0,
@@ -105,7 +107,8 @@ func newHandler(
 	asyncWrite bool,
 ) *IntakeHandler {
 	notifier := telegram.NewNotifier("", "", false)
-	return NewIntakeHandler(writer, plantRepo, statusRepo, notifier, asyncWrite)
+	svc := services.NewEventIngestionService(writer, plantRepo, statusRepo, nil, notifier, asyncWrite)
+	return NewIntakeHandler(svc)
 }
 
 // --- Tests ---
@@ -116,7 +119,7 @@ func TestHandleMessage_ValidMessage_AsyncWrite(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(validMessage())
+	err := handler.HandleMessage(context.Background(), validMessage())
 
 	require.NoError(t, err)
 	assert.True(t, writer.saveEventAsyncCalled, "SaveEventAsync should be called")
@@ -133,7 +136,7 @@ func TestHandleMessage_ValidMessage_SyncWrite(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, false)
 
-	err := handler.HandleMessage(validMessage())
+	err := handler.HandleMessage(context.Background(), validMessage())
 
 	require.NoError(t, err)
 	assert.True(t, writer.saveEventCalled, "SaveEvent should be called in sync mode")
@@ -146,7 +149,7 @@ func TestHandleMessage_InvalidJSON(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage([]byte("not valid json{{{"))
+	err := handler.HandleMessage(context.Background(), []byte("not valid json{{{"))
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsPermanent(err), "invalid JSON should be a permanent error")
@@ -165,7 +168,7 @@ func TestHandleMessage_MissingPlantSourceID(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(data)
+	err := handler.HandleMessage(context.Background(), data)
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsPermanent(err), "missing plant_source_id should be permanent error")
@@ -183,7 +186,7 @@ func TestHandleMessage_InvalidPlantSourceIDFormat(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(data)
+	err := handler.HandleMessage(context.Background(), data)
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsPermanent(err), "invalid UUID format should be permanent error")
@@ -201,7 +204,7 @@ func TestHandleMessage_PlantDoesNotExist(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(data)
+	err := handler.HandleMessage(context.Background(), data)
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsTransient(err), "non-existent plant should be transient error (may appear later)")
@@ -219,7 +222,7 @@ func TestHandleMessage_PlantExistsCheckDBError(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(data)
+	err := handler.HandleMessage(context.Background(), data)
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsTransient(err), "DB error should be transient (retryable)")
@@ -231,7 +234,7 @@ func TestHandleMessage_SaveAsyncError(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(validMessage())
+	err := handler.HandleMessage(context.Background(), validMessage())
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsTransient(err), "save error should be transient")
@@ -239,8 +242,8 @@ func TestHandleMessage_SaveAsyncError(t *testing.T) {
 
 func TestHandleMessage_ValidationFailure(t *testing.T) {
 	msg := map[string]any{
-		"event_type":        "power_reading",
-		"plant_source_id":   testPlantID.String(),
+		"event_type":         "power_reading",
+		"plant_source_id":    testPlantID.String(),
 		"efficiency_percent": 150.0, // Invalid: exceeds 100
 	}
 	data, _ := json.Marshal(msg)
@@ -250,7 +253,7 @@ func TestHandleMessage_ValidationFailure(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(data)
+	err := handler.HandleMessage(context.Background(), data)
 
 	require.Error(t, err)
 	assert.True(t, domainerrors.IsPermanent(err), "validation failure should be permanent error")
@@ -266,11 +269,11 @@ func TestHandleMessage_IdempotentID(t *testing.T) {
 	message := validMessage()
 
 	// Process same message twice
-	err1 := handler.HandleMessage(message)
+	err1 := handler.HandleMessage(context.Background(), message)
 	require.NoError(t, err1)
 	firstID := writer.savedOp.ID
 
-	err2 := handler.HandleMessage(message)
+	err2 := handler.HandleMessage(context.Background(), message)
 	require.NoError(t, err2)
 	secondID := writer.savedOp.ID
 
@@ -292,7 +295,7 @@ func TestHandleMessage_ExplicitIDInMessage(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(data)
+	err := handler.HandleMessage(context.Background(), data)
 
 	require.NoError(t, err)
 	assert.Equal(t, explicitID, writer.savedOp.ID, "should use the explicit ID from message")
@@ -304,7 +307,7 @@ func TestHandleMessage_PlantStatusUpsertFailure_NonBlocking(t *testing.T) {
 	statusRepo := &mockPlantStatusRepo{upsertErr: fmt.Errorf("DB error")}
 	handler := newHandler(writer, plantRepo, statusRepo, true)
 
-	err := handler.HandleMessage(validMessage())
+	err := handler.HandleMessage(context.Background(), validMessage())
 
 	// Message processing should succeed even if plant status update fails
 	require.NoError(t, err)

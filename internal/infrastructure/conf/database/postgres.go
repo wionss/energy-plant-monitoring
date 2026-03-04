@@ -114,7 +114,10 @@ func SeedDB(db *gorm.DB, directory string) error {
 		name := item.name
 		entity := item.entity
 		var count int64
-		if db.Model(entity).Count(&count); count == 0 {
+		if err := db.Model(entity).Count(&count).Error; err != nil {
+			return fmt.Errorf("failed to count %s records: %w", name, err)
+		}
+		if count == 0 {
 			slog.Info("seeding model", "model", name)
 			err := seedData(db, directory, name)
 			if err != nil {

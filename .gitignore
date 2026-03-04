@@ -10,7 +10,7 @@
 /vendor
 # Test binary
 *.test
-
+*.md
 # Output of the go coverage tool
 *.out
 

@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 
@@ -29,9 +30,9 @@ func NewEnergyPlantRepository(db *gorm.DB) *EnergyPlantRepository {
 	return &EnergyPlantRepository{db: db, cache: cache}
 }
 
-func (r *EnergyPlantRepository) FindByID(id uuid.UUID) (*entities.EnergyPlants, error) {
+func (r *EnergyPlantRepository) FindByID(ctx context.Context, id uuid.UUID) (*entities.EnergyPlants, error) {
 	var model EnergyPlantsModel
-	if err := r.db.First(&model, "id = ?", id).Error; err != nil {
+	if err := r.db.WithContext(ctx).First(&model, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domainerrors.ErrNotFound
 		}
@@ -40,7 +41,7 @@ func (r *EnergyPlantRepository) FindByID(id uuid.UUID) (*entities.EnergyPlants, 
 	return ToEnergyPlantsEntity(&model), nil
 }
 
-func (r *EnergyPlantRepository) Exists(id uuid.UUID) (bool, error) {
+func (r *EnergyPlantRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
 	// 1. Revisar Caché primero
 	if r.cache != nil {
 		if exists, found := r.cache.Get(id); found {
@@ -50,7 +51,7 @@ func (r *EnergyPlantRepository) Exists(id uuid.UUID) (bool, error) {
 
 	// 2. Revisar BD (solo si no está en caché)
 	var count int64
-	err := r.db.Model(&EnergyPlantsModel{}).Where("id = ?", id).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&EnergyPlantsModel{}).Where("id = ?", id).Count(&count).Error
 	if err != nil {
 		return false, err
 	}

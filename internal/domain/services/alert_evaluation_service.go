@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 )
@@ -14,6 +15,7 @@ type AlertRule struct {
 	Condition       string  // Condition type: "gt", "lt", "gte", "lte", "eq", "contains"
 	FieldPath       string  // JSON path to check: "data.temperature", "data.status"
 	Threshold       float64 // Comparison value
+	ThresholdStr    string  // string comparison value for "contains" condition
 	Severity        string  // "info", "warning", "critical"
 	NotificationMsg string  // Message template for telegram notification
 }
@@ -85,7 +87,7 @@ func (s *AlertEvaluationService) evaluateCondition(rule AlertRule, data map[stri
 	case "eq":
 		return fmt.Sprintf("%v", value) == fmt.Sprintf("%v", rule.Threshold)
 	case "contains":
-		return containsString(value, rule.FieldPath)
+		return containsString(value, rule.ThresholdStr)
 	}
 
 	return false
@@ -122,7 +124,6 @@ func (s *AlertEvaluationService) triggerAlert(
 		rule.Severity, rule.NotificationMsg, plantName, eventType, rule.Severity,
 	)
 
-	// Enviar notificación
 	slog.Warn("alert triggered",
 		"rule", rule.Name,
 		"plant", plantName,
@@ -130,12 +131,9 @@ func (s *AlertEvaluationService) triggerAlert(
 		"severity", rule.Severity,
 	)
 
-	// Enviar a través de Telegram sin bloquear
-	go func() {
-		// La implementación real dependería de cómo está estructurado el telegram.Notifier
-		// Por ahora, solo registramos el log
-		slog.Info("alert notification would be sent", "message", alertMsg)
-	}()
+	if err := s.telegramNotifier.SendErrorNotification(rule.Severity, rule.NotificationMsg, alertMsg); err != nil {
+		slog.Error("failed to send alert notification", "rule", rule.Name, "error", err)
+	}
 }
 
 // getDefaultAlertRules retorna las reglas de alerta predefinidas
@@ -209,7 +207,7 @@ func toFloat64(value interface{}) (float64, bool) {
 func containsString(value interface{}, searchStr string) bool {
 	switch v := value.(type) {
 	case string:
-		return len(searchStr) > 0 && len(v) > 0 // Simplified check
+		return strings.Contains(v, searchStr)
 	default:
 		return false
 	}

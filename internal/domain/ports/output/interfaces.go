@@ -1,6 +1,7 @@
 package output
 
 import (
+	"context"
 	"time"
 
 	"monitoring-energy-service/internal/domain/entities"
@@ -25,6 +26,8 @@ type KafkaAdapterInterface interface {
 	// CommitMessage manually commits the offset for the given message
 	// This should only be called after successful processing
 	CommitMessage(msg *KafkaMessage) error
+	// Close flushes pending messages and releases producer/consumer resources
+	Close()
 }
 
 // WebhookAdapterInterface defines the contract for webhook operations
@@ -34,11 +37,11 @@ type WebhookAdapterInterface interface {
 
 // ExampleRepositoryInterface defines the contract for example data persistence
 type ExampleRepositoryInterface interface {
-	FindByID(id uuid.UUID) (*entities.ExampleEntity, error)
-	FindAll() ([]*entities.ExampleEntity, error)
-	Create(entity *entities.ExampleEntity) (*entities.ExampleEntity, error)
-	Update(entity *entities.ExampleEntity) (*entities.ExampleEntity, error)
-	Delete(id uuid.UUID) error
+	FindByID(ctx context.Context, id uuid.UUID) (*entities.ExampleEntity, error)
+	FindAll(ctx context.Context) ([]*entities.ExampleEntity, error)
+	Create(ctx context.Context, entity *entities.ExampleEntity) (*entities.ExampleEntity, error)
+	Update(ctx context.Context, entity *entities.ExampleEntity) (*entities.ExampleEntity, error)
+	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 // EventRepositoryInterface define el contrato para la persistencia de eventos
@@ -53,10 +56,10 @@ type ExampleRepositoryInterface interface {
 // - FindByID: Obtiene un evento específico
 // - FindByEventType: Filtra eventos por tipo (power_reading, alert, etc.)
 type EventRepositoryInterface interface {
-	Create(entity *entities.EventEntity) (*entities.EventEntity, error)
-	FindAll() ([]*entities.EventEntity, error)
-	FindByID(id uuid.UUID) (*entities.EventEntity, error)
-	FindByEventType(eventType string) ([]*entities.EventEntity, error)
+	Create(ctx context.Context, entity *entities.EventEntity) (*entities.EventEntity, error)
+	FindAll(ctx context.Context, q PageQuery) (*Page[*entities.EventEntity], error)
+	FindByID(ctx context.Context, id uuid.UUID) (*entities.EventEntity, error)
+	FindByEventType(ctx context.Context, eventType string, q PageQuery) (*Page[*entities.EventEntity], error)
 }
 
 // EnergyPlantRepositoryInterface define el contrato para la persistencia de plantas de energía
@@ -68,32 +71,32 @@ type EventRepositoryInterface interface {
 // - FindByID: Verifica si una planta existe por su UUID
 // - Exists: Método rápido para validar existencia
 type EnergyPlantRepositoryInterface interface {
-	FindByID(id uuid.UUID) (*entities.EnergyPlants, error)
-	Exists(id uuid.UUID) (bool, error)
+	FindByID(ctx context.Context, id uuid.UUID) (*entities.EnergyPlants, error)
+	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 // EventOperationalRepositoryInterface define el contrato para datos operacionales (calientes)
 // Esquema: operational.events_std
 type EventOperationalRepositoryInterface interface {
-	Create(entity *entities.EventOperational) (*entities.EventOperational, error)
-	FindAll() ([]*entities.EventOperational, error)
-	FindByID(id uuid.UUID) (*entities.EventOperational, error)
-	FindByEventType(eventType string) ([]*entities.EventOperational, error)
+	Create(ctx context.Context, entity *entities.EventOperational) (*entities.EventOperational, error)
+	FindAll(ctx context.Context, q PageQuery) (*Page[*entities.EventOperational], error)
+	FindByID(ctx context.Context, id uuid.UUID) (*entities.EventOperational, error)
+	FindByEventType(ctx context.Context, eventType string, q PageQuery) (*Page[*entities.EventOperational], error)
 }
 
 // EventAnalyticalRepositoryInterface define el contrato para datos analíticos (fríos)
 // Esquema: analytical.events_ts (TimescaleDB hypertable)
 type EventAnalyticalRepositoryInterface interface {
-	Create(entity *entities.EventAnalytical) (*entities.EventAnalytical, error)
-	FindByTimeRange(start, end time.Time) ([]*entities.EventAnalytical, error)
-	GetHourlyAggregation(plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
-	GetDailyAggregation(plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
+	Create(ctx context.Context, entity *entities.EventAnalytical) (*entities.EventAnalytical, error)
+	FindByTimeRange(ctx context.Context, start, end time.Time) ([]*entities.EventAnalytical, error)
+	GetHourlyAggregation(ctx context.Context, plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
+	GetDailyAggregation(ctx context.Context, plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
 }
 
 // DualEventWriterInterface define el contrato para escritura dual a ambas tablas
 type DualEventWriterInterface interface {
-	SaveEvent(op *entities.EventOperational, an *entities.EventAnalytical) error
-	SaveEventAsync(op *entities.EventOperational, an *entities.EventAnalytical) error
+	SaveEvent(ctx context.Context, op *entities.EventOperational, an *entities.EventAnalytical) error
+	SaveEventAsync(op *entities.EventOperational, an *entities.EventAnalytical) error // no ctx: non-blocking enqueue
 	Stop()
 }
 
@@ -121,8 +124,8 @@ type AnalyticsCoordinatorInterface interface {
 
 // PlantStatusRepositoryInterface - contrato para el Digital Twin de estado de plantas
 type PlantStatusRepositoryInterface interface {
-	Upsert(status *entities.PlantCurrentStatus) error
-	GetByPlantID(plantID uuid.UUID) (*entities.PlantCurrentStatus, error)
-	GetAll() ([]*entities.PlantCurrentStatus, error)
-	GetByStatus(status string) ([]*entities.PlantCurrentStatus, error)
+	Upsert(ctx context.Context, status *entities.PlantCurrentStatus) error
+	GetByPlantID(ctx context.Context, plantID uuid.UUID) (*entities.PlantCurrentStatus, error)
+	GetAll(ctx context.Context) ([]*entities.PlantCurrentStatus, error)
+	GetByStatus(ctx context.Context, status string) ([]*entities.PlantCurrentStatus, error)
 }

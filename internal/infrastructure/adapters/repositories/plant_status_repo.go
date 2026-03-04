@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"fmt"
 
 	"monitoring-energy-service/internal/domain/entities"
@@ -25,10 +26,10 @@ func NewPlantStatusRepository(db *gorm.DB) *PlantStatusRepository {
 
 // Upsert creates or updates the current status of a plant
 // Uses INSERT ... ON CONFLICT for atomic upsert
-func (r *PlantStatusRepository) Upsert(status *entities.PlantCurrentStatus) error {
+func (r *PlantStatusRepository) Upsert(ctx context.Context, status *entities.PlantCurrentStatus) error {
 	model := ToPlantCurrentStatusModel(status)
 
-	result := r.db.Clauses(clause.OnConflict{
+	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "plant_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"last_event_data", "current_status", "last_event_type", "last_event_at", "updated_at"}),
 	}).Create(model)
@@ -41,10 +42,10 @@ func (r *PlantStatusRepository) Upsert(status *entities.PlantCurrentStatus) erro
 }
 
 // GetByPlantID retrieves the current status of a specific plant
-func (r *PlantStatusRepository) GetByPlantID(plantID uuid.UUID) (*entities.PlantCurrentStatus, error) {
+func (r *PlantStatusRepository) GetByPlantID(ctx context.Context, plantID uuid.UUID) (*entities.PlantCurrentStatus, error) {
 	var model PlantCurrentStatusModel
 
-	if err := r.db.Where("plant_id = ?", plantID).First(&model).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("plant_id = ?", plantID).First(&model).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
@@ -55,10 +56,10 @@ func (r *PlantStatusRepository) GetByPlantID(plantID uuid.UUID) (*entities.Plant
 }
 
 // GetAll retrieves the current status of all plants
-func (r *PlantStatusRepository) GetAll() ([]*entities.PlantCurrentStatus, error) {
+func (r *PlantStatusRepository) GetAll(ctx context.Context) ([]*entities.PlantCurrentStatus, error) {
 	var models []PlantCurrentStatusModel
 
-	if err := r.db.Order("updated_at DESC").Find(&models).Error; err != nil {
+	if err := r.db.WithContext(ctx).Order("updated_at DESC").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("failed to get all plant statuses: %w", err)
 	}
 
@@ -71,10 +72,10 @@ func (r *PlantStatusRepository) GetAll() ([]*entities.PlantCurrentStatus, error)
 }
 
 // GetByStatus retrieves plants filtered by their current status
-func (r *PlantStatusRepository) GetByStatus(status string) ([]*entities.PlantCurrentStatus, error) {
+func (r *PlantStatusRepository) GetByStatus(ctx context.Context, status string) ([]*entities.PlantCurrentStatus, error) {
 	var models []PlantCurrentStatusModel
 
-	if err := r.db.Where("current_status = ?", status).Order("updated_at DESC").Find(&models).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("current_status = ?", status).Order("updated_at DESC").Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("failed to get plants by status: %w", err)
 	}
 

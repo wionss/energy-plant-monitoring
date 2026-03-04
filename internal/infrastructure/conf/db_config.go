@@ -2,6 +2,7 @@ package conf
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -33,7 +34,7 @@ func LoadDBSettings() (DBSettings, error) {
 func DBUriPsql(dbSetting DBSettings) string {
 	databaseUrl := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?search_path=%s&sslmode=disable",
 		dbSetting.DbUser,
-		dbSetting.DbPassword,
+		url.PathEscape(dbSetting.DbPassword),
 		dbSetting.DbHost,
 		dbSetting.DbPort,
 		dbSetting.DbName,

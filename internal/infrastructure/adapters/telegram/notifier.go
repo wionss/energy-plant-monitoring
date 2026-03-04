@@ -58,13 +58,20 @@ func (n *Notifier) worker() {
 
 	for msg := range n.alertChan {
 		if err := n.sendMessage(msg.text); err != nil {
-			slog.Error("failed to send Telegram notification", "error", err)
+			slog.Error("failed to send Telegram notification", "error", n.maskToken(err))
 		} else {
 			slog.Info("Telegram notification sent")
 		}
 		// Simple rate limit: 1 message per 100ms
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func (n *Notifier) maskToken(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.ReplaceAll(err.Error(), n.botToken, "***")
 }
 
 func (n *Notifier) enqueue(text string) {

@@ -115,7 +115,7 @@ func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 		}
 
 		// Validar que la planta existe en la base de datos
-		exists, err := h.energyPlantRepo.Exists(plantSourceID)
+		exists, err := h.energyPlantRepo.Exists(ctx.Request.Context(), plantSourceID)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, TestIntakeResponse{
 				Success: false,

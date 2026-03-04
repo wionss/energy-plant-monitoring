@@ -1,15 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
-	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
 	domainerrors "monitoring-energy-service/internal/domain/errors"
 	"monitoring-energy-service/internal/domain/ports/input"
 	"monitoring-energy-service/internal/domain/ports/output"
+	"monitoring-energy-service/internal/infrastructure/adapters/metrics"
+	"monitoring-energy-service/internal/infrastructure/tracing"
 )
 
 const (
@@ -20,17 +25,24 @@ const (
 type KafkaService struct {
 	kafkaAdapter    output.KafkaAdapterInterface
 	topicHandlers   map[string]input.MessageHandler
+	handlersMu      sync.RWMutex
 	stopChan        chan struct{}
+	stopOnce        sync.Once
 	consumerHealthy atomic.Bool // tracks consumer goroutine health
+	consumerCtx     context.Context
+	consumerCancel  context.CancelFunc
 }
 
 var _ input.KafkaServiceInterface = &KafkaService{}
 
 func NewKafkaService(adapter output.KafkaAdapterInterface) *KafkaService {
+	consumerCtx, consumerCancel := context.WithCancel(context.Background())
 	ks := &KafkaService{
-		kafkaAdapter:  adapter,
-		topicHandlers: make(map[string]input.MessageHandler),
-		stopChan:      make(chan struct{}),
+		kafkaAdapter:   adapter,
+		topicHandlers:  make(map[string]input.MessageHandler),
+		stopChan:       make(chan struct{}),
+		consumerCtx:    consumerCtx,
+		consumerCancel: consumerCancel,
 	}
 	// Consumer starts as healthy by default
 	ks.consumerHealthy.Store(true)
@@ -47,6 +59,8 @@ func (ks *KafkaService) SendEvent(topic string, key string, event any) error {
 }
 
 func (ks *KafkaService) RegisterHandler(topic string, handler input.MessageHandler) {
+	ks.handlersMu.Lock()
+	defer ks.handlersMu.Unlock()
 	ks.topicHandlers[topic] = handler
 }
 
@@ -71,13 +85,38 @@ func (ks *KafkaService) SendToDLQ(message []byte, reason string) {
 	}
 }
 
+// sendToDLQWithCtx sends a message to the DLQ including the correlation ID from ctx.
+func (ks *KafkaService) sendToDLQWithCtx(ctx context.Context, topic string, message []byte, reason string, metricReason string) {
+	dlqMsg := map[string]any{
+		"original_message": json.RawMessage(message),
+		"error_reason":     reason,
+		"timestamp":        time.Now().UTC().Format(time.RFC3339),
+		"correlation_id":   tracing.CorrelationIDFromCtx(ctx),
+	}
+
+	payload, err := json.Marshal(dlqMsg)
+	if err != nil {
+		slog.Error("failed to marshal DLQ message", "error", err)
+		return
+	}
+
+	if err := ks.kafkaAdapter.SendMessage(dlqTopic, "", payload); err != nil {
+		slog.Error("failed to send message to DLQ", "error", err, "reason", reason)
+	} else {
+		slog.Warn("message sent to DLQ", "reason", reason, "correlation_id", tracing.CorrelationIDFromCtx(ctx))
+		metrics.KafkaDLQSendsTotal.WithLabelValues(topic, metricReason).Inc()
+	}
+}
+
 func (ks *KafkaService) ConsumeEvents() {
 	slog.Info("starting Kafka consumer with manual commit enabled")
 
+	ks.handlersMu.RLock()
 	topics := make([]string, 0, len(ks.topicHandlers))
 	for topic := range ks.topicHandlers {
 		topics = append(topics, topic)
 	}
+	ks.handlersMu.RUnlock()
 
 	if len(topics) == 0 {
 		slog.Info("no topics registered, skipping Kafka consumer")
@@ -89,8 +128,7 @@ func (ks *KafkaService) ConsumeEvents() {
 		return
 	}
 
-	disconnectedCount := 0
-	connectionRefusedCount := 0
+	connectionErrCount := 0
 
 	for {
 		select {
@@ -101,34 +139,37 @@ func (ks *KafkaService) ConsumeEvents() {
 		default:
 			kafkaMsg, err := ks.kafkaAdapter.ReadMessage()
 			if err != nil {
+				// Timeout is normal - it allows checking stopChan on each poll cycle
+				if kafkaErr, ok := err.(kafka.Error); ok && kafkaErr.Code() == kafka.ErrTimedOut {
+					continue
+				}
 				slog.Error("error reading message", "error", err)
 
-				if strings.Contains(err.Error(), "Disconnected") {
-					disconnectedCount++
-					if disconnectedCount > 10 {
-						slog.Error("disconnected from Kafka too many times, marking consumer as unhealthy and stopping")
-						ks.consumerHealthy.Store(false)
-						return
-					}
-				}
-
-				if strings.Contains(err.Error(), "Connection refused") {
-					connectionRefusedCount++
-					if connectionRefusedCount > 10 {
-						slog.Error("connection refused from Kafka too many times, marking consumer as unhealthy and stopping")
-						ks.consumerHealthy.Store(false)
-						return
+				if kafkaErr, ok := err.(kafka.Error); ok {
+					switch kafkaErr.Code() {
+					case kafka.ErrTransport, kafka.ErrAllBrokersDown, kafka.ErrNetworkException:
+						connectionErrCount++
+						if connectionErrCount > 10 {
+							slog.Error("kafka connection errors exceeded threshold, marking consumer as unhealthy",
+								"error_code", kafkaErr.Code(),
+								"count", connectionErrCount,
+							)
+							ks.consumerHealthy.Store(false)
+							return
+						}
+						slog.Warn("kafka connection error", "error_code", kafkaErr.Code(), "count", connectionErrCount)
 					}
 				}
 
 				continue
 			}
 
-			// Reset counters on successful read
-			disconnectedCount = 0
-			connectionRefusedCount = 0
+			// Reset counter on successful read
+			connectionErrCount = 0
 
+			ks.handlersMu.RLock()
 			handler, ok := ks.topicHandlers[kafkaMsg.Topic]
+			ks.handlersMu.RUnlock()
 			if !ok {
 				slog.Warn("no handler registered for topic", "topic", kafkaMsg.Topic)
 				// Commit even for unhandled topics to prevent reprocessing
@@ -136,28 +177,29 @@ func (ks *KafkaService) ConsumeEvents() {
 				continue
 			}
 
+			// Attach a fresh correlation ID to each message context
+			msgCtx := tracing.WithCorrelationID(ks.consumerCtx, tracing.NewCorrelationID())
+
 			slog.Info("handling message",
 				"topic", kafkaMsg.Topic,
 				"partition", kafkaMsg.Partition,
 				"offset", kafkaMsg.Offset,
+				"correlation_id", tracing.CorrelationIDFromCtx(msgCtx),
 			)
 
 			// Process message with retry logic
-			success := ks.handleWithRetry(handler, kafkaMsg.Value, kafkaMsg.Topic)
+			success := ks.handleWithRetry(msgCtx, handler, kafkaMsg.Value, kafkaMsg.Topic)
 
 			// PRODUCTION READY: Only commit offset after successful processing
 			// This ensures at-least-once delivery semantics
 			if success {
 				ks.commitOffset(kafkaMsg)
 			} else {
-				// Message was sent to DLQ, still commit to avoid infinite retry loop
-				// The DLQ acts as a persistent record of failed messages
-				slog.Warn("message processing failed, committing offset after DLQ send",
+				slog.Info("processing cancelled, offset not committed - will be redelivered",
 					"topic", kafkaMsg.Topic,
 					"partition", kafkaMsg.Partition,
 					"offset", kafkaMsg.Offset,
 				)
-				ks.commitOffset(kafkaMsg)
 			}
 		}
 	}
@@ -176,8 +218,8 @@ func (ks *KafkaService) commitOffset(msg *output.KafkaMessage) {
 }
 
 // handleWithRetry returns true if the message was processed successfully (including permanent errors sent to DLQ)
-func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []byte, topic string) bool {
-	err := handler.HandleMessage(message)
+func (ks *KafkaService) handleWithRetry(ctx context.Context, handler input.MessageHandler, message []byte, topic string) bool {
+	err := handler.HandleMessage(ctx, message)
 	if err == nil {
 		return true
 	}
@@ -185,7 +227,7 @@ func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []
 	// Permanent errors go directly to DLQ
 	if domainerrors.IsPermanent(err) {
 		slog.Warn("permanent error, sending to DLQ", "topic", topic, "error", err)
-		ks.SendToDLQ(message, err.Error())
+		ks.sendToDLQWithCtx(ctx, topic, message, err.Error(), "permanent")
 		return true // DLQ send is considered "handled"
 	}
 
@@ -198,16 +240,27 @@ func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []
 			"backoff", backoff,
 			"error", err,
 		)
-		time.Sleep(backoff)
+		metrics.KafkaRetryAttemptsTotal.WithLabelValues(topic).Inc()
 
-		err = handler.HandleMessage(message)
+		select {
+		case <-time.After(backoff):
+			// continue retry
+		case <-ctx.Done():
+			slog.Info("context cancelled during retry, leaving uncommitted for restart",
+				"topic", topic,
+				"attempt", attempt,
+			)
+			return false
+		}
+
+		err = handler.HandleMessage(ctx, message)
 		if err == nil {
 			return true
 		}
 
 		if domainerrors.IsPermanent(err) {
 			slog.Warn("permanent error on retry, sending to DLQ", "topic", topic, "error", err)
-			ks.SendToDLQ(message, err.Error())
+			ks.sendToDLQWithCtx(ctx, topic, message, err.Error(), "permanent")
 			return true // DLQ send is considered "handled"
 		}
 	}
@@ -218,7 +271,7 @@ func (ks *KafkaService) handleWithRetry(handler input.MessageHandler, message []
 		"retries", maxRetries,
 		"error", err,
 	)
-	ks.SendToDLQ(message, "max retries exhausted: "+err.Error())
+	ks.sendToDLQWithCtx(ctx, topic, message, "max retries exhausted: "+err.Error(), "max_retries")
 	return true // DLQ send is considered "handled"
 }
 
@@ -228,5 +281,8 @@ func (ks *KafkaService) IsConsumerHealthy() bool {
 }
 
 func (ks *KafkaService) StopConsuming() {
-	close(ks.stopChan)
+	ks.stopOnce.Do(func() {
+		ks.consumerCancel()
+		close(ks.stopChan)
+	})
 }

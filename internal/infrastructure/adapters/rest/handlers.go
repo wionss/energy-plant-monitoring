@@ -2,6 +2,7 @@ package rest
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"monitoring-energy-service/internal/domain/entities"
@@ -52,9 +53,10 @@ func NewExampleHandlers(exampleRepo output.ExampleRepositoryInterface) *ExampleH
 // @Router       /api/v1/examples [get]
 func (h *ExampleHandlers) ListExamples() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		examples, err := h.exampleRepo.FindAll()
+		examples, err := h.exampleRepo.FindAll(ctx.Request.Context())
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusOK, examples)
@@ -81,12 +83,13 @@ func (h *ExampleHandlers) GetExample() gin.HandlerFunc {
 			return
 		}
 
-		example, err := h.exampleRepo.FindByID(id)
+		example, err := h.exampleRepo.FindByID(ctx.Request.Context(), id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "example not found"})
 				return
 			}
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
@@ -118,9 +121,10 @@ func (h *ExampleHandlers) CreateExample() gin.HandlerFunc {
 			Description: req.Description,
 		}
 
-		created, err := h.exampleRepo.Create(entity)
+		created, err := h.exampleRepo.Create(ctx.Request.Context(), entity)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusCreated, created)
@@ -149,12 +153,13 @@ func (h *ExampleHandlers) UpdateExample() gin.HandlerFunc {
 			return
 		}
 
-		existing, err := h.exampleRepo.FindByID(id)
+		existing, err := h.exampleRepo.FindByID(ctx.Request.Context(), id)
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrNotFound) {
 				ctx.JSON(http.StatusNotFound, gin.H{"error": "example not found"})
 				return
 			}
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
 			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
@@ -172,9 +177,10 @@ func (h *ExampleHandlers) UpdateExample() gin.HandlerFunc {
 			existing.Description = req.Description
 		}
 
-		updated, err := h.exampleRepo.Update(existing)
+		updated, err := h.exampleRepo.Update(ctx.Request.Context(), existing)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusOK, updated)
@@ -201,8 +207,9 @@ func (h *ExampleHandlers) DeleteExample() gin.HandlerFunc {
 			return
 		}
 
-		if err := h.exampleRepo.Delete(id); err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err := h.exampleRepo.Delete(ctx.Request.Context(), id); err != nil {
+			slog.Error("handler error", "error", err, "path", ctx.FullPath())
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 		ctx.JSON(http.StatusNoContent, nil)

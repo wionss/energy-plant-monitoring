@@ -96,7 +96,7 @@ func main() {
 		Timeout: time.Duration(timeoutSeconds) * time.Second,
 	}
 
-	c := container.NewContainer(
+	c, err := container.NewContainer(
 		db,
 		kafkaBrokers,
 		consumerGroup,
@@ -104,6 +104,10 @@ func main() {
 		autoOffsetKafka,
 		container.WithConfig(*cfg),
 	)
+	if err != nil {
+		slog.Error("failed to initialize container", "error", err)
+		os.Exit(1)
+	}
 
 	// Start Kafka consumer in background
 	go c.KafkaService.ConsumeEvents()
@@ -204,11 +208,16 @@ func main() {
 }
 
 func HealthCheck(w http.ResponseWriter, r *http.Request, c *container.Container) {
-	// Check if Kafka consumer is healthy
 	if !c.KafkaService.IsConsumerHealthy() {
 		slog.Warn("health check failed: Kafka consumer is not healthy")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("kafka consumer unhealthy"))
+		return
+	}
+	if err := c.Ping(r.Context()); err != nil {
+		slog.Warn("health check failed: database not reachable", "error", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("database unreachable"))
 		return
 	}
 	w.WriteHeader(http.StatusOK)

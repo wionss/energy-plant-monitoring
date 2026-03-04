@@ -42,4 +42,22 @@ var (
 		},
 		[]string{"event_type"},
 	)
+
+	// KafkaDLQSendsTotal counts the total number of messages sent to the DLQ
+	KafkaDLQSendsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_dlq_sends_total",
+			Help: "Messages sent to DLQ",
+		},
+		[]string{"topic", "reason"},
+	)
+
+	// KafkaRetryAttemptsTotal counts the total number of Kafka retry attempts
+	KafkaRetryAttemptsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_retry_attempts_total",
+			Help: "Kafka retry attempts",
+		},
+		[]string{"topic"},
+	)
 )
