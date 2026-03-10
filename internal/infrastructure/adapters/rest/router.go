@@ -18,7 +18,7 @@ func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
 	{
 		// Inicializar handlers con sus dependencias específicas
 		exampleHandlers := NewExampleHandlers(c.ExampleRepository)
-		eventHandlers := NewEventHandlers(c.EventRepository, c.EventOperationalRepo, c.EventAnalyticalRepo)
+		eventHandlers := NewEventHandlers(c.EventOperationalRepo, c.EventAnalyticalRepo)
 		plantStatusHandlers := NewPlantStatusHandlers(c.PlantStatusRepository)
 		testHandlers := NewTestHandlers(c.EnergyPlantRepository, c.TelegramNotifier)
 
@@ -35,10 +35,6 @@ func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
 		// Events endpoints
 		events := api.Group("/events")
 		{
-			events.GET("", eventHandlers.ListEvents())
-			events.GET("/:id", eventHandlers.GetEvent())
-			events.GET("/type/:type", eventHandlers.GetEventsByType())
-
 			// Operational data (hot data)
 			operational := events.Group("/operational")
 			{

@@ -11,6 +11,61 @@ import (
 	"gorm.io/gorm"
 )
 
+// AlertRuleModel is the GORM persistence model for alert rules stored in the DB.
+type AlertRuleModel struct {
+	ID              uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	Name            string    `gorm:"type:varchar(100);uniqueIndex;not null"`
+	EventType       string    `gorm:"type:varchar(100);not null"`
+	Condition       string    `gorm:"type:varchar(20);not null"`
+	FieldPath       string    `gorm:"type:varchar(255);not null"`
+	Threshold       *float64  `gorm:"type:double precision"`
+	ThresholdStr    *string   `gorm:"type:varchar(255)"`
+	Severity        string    `gorm:"type:varchar(20);not null;default:'warning'"`
+	NotificationMsg string    `gorm:"type:text"`
+	Active          bool      `gorm:"not null;default:true"`
+	CreatedAt       time.Time `gorm:"autoCreateTime"`
+	UpdatedAt       time.Time `gorm:"autoUpdateTime"`
+}
+
+func (AlertRuleModel) TableName() string { return "master.alert_rules" }
+
+func ToAlertRuleModel(r *entities.AlertRule) *AlertRuleModel {
+	m := &AlertRuleModel{
+		Name:            r.Name,
+		EventType:       r.EventType,
+		Condition:       r.Condition,
+		FieldPath:       r.FieldPath,
+		Severity:        r.Severity,
+		NotificationMsg: r.NotificationMsg,
+		Active:          true,
+	}
+	if r.Threshold != 0 {
+		m.Threshold = &r.Threshold
+	}
+	if r.ThresholdStr != "" {
+		m.ThresholdStr = &r.ThresholdStr
+	}
+	return m
+}
+
+func ToAlertRuleFromModel(m *AlertRuleModel) entities.AlertRule {
+	r := entities.AlertRule{
+		Name:            m.Name,
+		EventType:       m.EventType,
+		Condition:       m.Condition,
+		FieldPath:       m.FieldPath,
+		Severity:        m.Severity,
+		NotificationMsg: m.NotificationMsg,
+	}
+	if m.Threshold != nil {
+		r.Threshold = *m.Threshold
+	}
+	if m.ThresholdStr != nil {
+		r.ThresholdStr = *m.ThresholdStr
+	}
+	return r
+}
+
 // ============================================================================
 // GORM Persistence Models
 // ============================================================================
@@ -62,22 +117,6 @@ type EnergyPlantsModel struct {
 
 func (EnergyPlantsModel) TableName() string {
 	return "master.energy_plants"
-}
-
-// EventModel is the GORM persistence model for legacy events.
-type EventModel struct {
-	ID            uuid.UUID         `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
-	EventType     string            `gorm:"type:varchar(100);index:idx_event_type;not null"`
-	PlantSourceId uuid.UUID         `gorm:"type:uuid;index:idx_plant_source_id;not null"`
-	Source        string            `gorm:"type:varchar(255)"`
-	Data          datatypes.JSON    `gorm:"type:jsonb;not null"`
-	Metadata      datatypes.JSON    `gorm:"type:jsonb"`
-	CreatedAt     time.Time         `gorm:"autoCreateTime;index:idx_created_at"`
-	PlantSource   EnergyPlantsModel `gorm:"foreignKey:PlantSourceId;references:ID"`
-}
-
-func (EventModel) TableName() string {
-	return "events"
 }
 
 // ============================================================================
@@ -157,30 +196,6 @@ func ToEnergyPlantsEntity(m *EnergyPlantsModel) *entities.EnergyPlants {
 		CapacityMW: m.CapacityMW,
 		CreatedAt:  m.CreatedAt,
 		UpdatedAt:  m.UpdatedAt,
-	}
-}
-
-func ToEventModel(e *entities.EventEntity) *EventModel {
-	return &EventModel{
-		ID:            e.ID,
-		EventType:     e.EventType,
-		PlantSourceId: e.PlantSourceId,
-		Source:        e.Source,
-		Data:          datatypes.JSON(e.Data),
-		Metadata:      datatypes.JSON(e.Metadata),
-		CreatedAt:     e.CreatedAt,
-	}
-}
-
-func ToEventEntity(m *EventModel) *entities.EventEntity {
-	return &entities.EventEntity{
-		ID:            m.ID,
-		EventType:     m.EventType,
-		PlantSourceId: m.PlantSourceId,
-		Source:        m.Source,
-		Data:          json.RawMessage(m.Data),
-		Metadata:      json.RawMessage(m.Metadata),
-		CreatedAt:     m.CreatedAt,
 	}
 }
 

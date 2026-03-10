@@ -3,15 +3,26 @@ package services
 import (
 	"testing"
 
+	"monitoring-energy-service/internal/domain/entities"
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
 
 	"github.com/stretchr/testify/assert"
 )
 
+// stubRulesRepo is a minimal in-memory AlertRulesRepositoryInterface for tests.
+type stubRulesRepo struct {
+	rules []entities.AlertRule
+}
+
+func (s *stubRulesRepo) FindActive() ([]entities.AlertRule, error) {
+	return s.rules, nil
+}
+
 func newTestService(t *testing.T) *AlertEvaluationService {
 	n := telegram.NewNotifier("", "", false)
 	t.Cleanup(func() { n.Stop() })
-	return NewAlertEvaluationService(n)
+	repo := &stubRulesRepo{rules: defaultAlertRules()}
+	return NewAlertEvaluationService(n, repo)
 }
 
 // --- toFloat64 tests ---
@@ -80,55 +91,55 @@ func TestContainsString_NonString(t *testing.T) {
 
 func TestEvaluateCondition_GtTrue(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "gt", FieldPath: "val", Threshold: 10}
+	rule := entities.AlertRule{Condition: "gt", FieldPath: "val", Threshold: 10}
 	assert.True(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(15)}))
 }
 
 func TestEvaluateCondition_GtFalse(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "gt", FieldPath: "val", Threshold: 10}
+	rule := entities.AlertRule{Condition: "gt", FieldPath: "val", Threshold: 10}
 	assert.False(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(5)}))
 }
 
 func TestEvaluateCondition_Gte(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "gte", FieldPath: "val", Threshold: 10}
+	rule := entities.AlertRule{Condition: "gte", FieldPath: "val", Threshold: 10}
 	assert.True(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(10)}))
 }
 
 func TestEvaluateCondition_Lt(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "lt", FieldPath: "val", Threshold: 10}
+	rule := entities.AlertRule{Condition: "lt", FieldPath: "val", Threshold: 10}
 	assert.True(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(5)}))
 }
 
 func TestEvaluateCondition_Lte(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "lte", FieldPath: "val", Threshold: 10}
+	rule := entities.AlertRule{Condition: "lte", FieldPath: "val", Threshold: 10}
 	assert.True(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(10)}))
 }
 
 func TestEvaluateCondition_Eq(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "eq", FieldPath: "val", Threshold: 42}
+	rule := entities.AlertRule{Condition: "eq", FieldPath: "val", Threshold: 42}
 	assert.True(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(42)}))
 }
 
 func TestEvaluateCondition_ContainsWithThresholdStr(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "contains", FieldPath: "msg", ThresholdStr: "error"}
+	rule := entities.AlertRule{Condition: "contains", FieldPath: "msg", ThresholdStr: "error"}
 	assert.True(t, svc.evaluateCondition(rule, map[string]interface{}{"msg": "critical error occurred"}))
 }
 
 func TestEvaluateCondition_UnknownCondition(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "unknown", FieldPath: "val", Threshold: 1}
+	rule := entities.AlertRule{Condition: "unknown", FieldPath: "val", Threshold: 1}
 	assert.False(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(99)}))
 }
 
 func TestEvaluateCondition_FieldNotFound(t *testing.T) {
 	svc := newTestService(t)
-	rule := AlertRule{Condition: "gt", FieldPath: "missing", Threshold: 10}
+	rule := entities.AlertRule{Condition: "gt", FieldPath: "missing", Threshold: 10}
 	assert.False(t, svc.evaluateCondition(rule, map[string]interface{}{"val": float64(99)}))
 }
 
@@ -145,7 +156,7 @@ func TestEvaluateEvent_NoMatchingRule(t *testing.T) {
 func TestEvaluateEvent_MatchingRuleNilNotifier(t *testing.T) {
 	svc := &AlertEvaluationService{
 		telegramNotifier: nil,
-		rules:            getDefaultAlertRules(),
+		rules:            defaultAlertRules(),
 	}
 	// Should not panic even with nil notifier
 	svc.EvaluateEvent("id2", "temperature", "plant1", "Plant One", map[string]interface{}{

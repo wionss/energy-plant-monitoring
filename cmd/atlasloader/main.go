@@ -14,7 +14,7 @@ func main() {
 	stmts, err := gormschema.New("postgres").Load(
 		&repositories.ExampleModel{},
 		&repositories.EnergyPlantsModel{},
-		&repositories.EventModel{},
+		&repositories.AlertRuleModel{},
 		&repositories.EventOperationalModel{},
 		&repositories.EventAnalyticalModel{},
 		// Analytics Worker models

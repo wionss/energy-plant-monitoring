@@ -44,22 +44,9 @@ type ExampleRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
-// EventRepositoryInterface define el contrato para la persistencia de eventos
-//
-// CAMBIO REALIZADO: Interface agregada (líneas 30-35)
-// RAZÓN: Sigue el patrón de arquitectura hexagonal, definiendo el contrato que
-// debe implementar el repositorio de eventos (EventRepository)
-//
-// MÉTODOS:
-// - Create: Guarda un evento consumido desde Kafka
-// - FindAll: Lista todos los eventos (para API REST)
-// - FindByID: Obtiene un evento específico
-// - FindByEventType: Filtra eventos por tipo (power_reading, alert, etc.)
-type EventRepositoryInterface interface {
-	Create(ctx context.Context, entity *entities.EventEntity) (*entities.EventEntity, error)
-	FindAll(ctx context.Context, q PageQuery) (*Page[*entities.EventEntity], error)
-	FindByID(ctx context.Context, id uuid.UUID) (*entities.EventEntity, error)
-	FindByEventType(ctx context.Context, eventType string, q PageQuery) (*Page[*entities.EventEntity], error)
+// AlertRulesRepositoryInterface defines the contract for fetching alert rules from the DB.
+type AlertRulesRepositoryInterface interface {
+	FindActive() ([]entities.AlertRule, error)
 }
 
 // EnergyPlantRepositoryInterface define el contrato para la persistencia de plantas de energía

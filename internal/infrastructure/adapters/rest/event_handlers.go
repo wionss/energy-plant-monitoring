@@ -25,7 +25,6 @@ import (
 
 // EventHandlers agrupa todos los handlers relacionados con eventos
 type EventHandlers struct {
-	eventRepo   output.EventRepositoryInterface
 	eventOpRepo output.EventOperationalRepositoryInterface
 	eventAnRepo output.EventAnalyticalRepositoryInterface
 }
@@ -33,120 +32,12 @@ type EventHandlers struct {
 // NewEventHandlers crea una nueva instancia de EventHandlers
 // Inyecta solo las dependencias necesarias (no el container completo)
 func NewEventHandlers(
-	eventRepo output.EventRepositoryInterface,
 	eventOpRepo output.EventOperationalRepositoryInterface,
 	eventAnRepo output.EventAnalyticalRepositoryInterface,
 ) *EventHandlers {
 	return &EventHandlers{
-		eventRepo:   eventRepo,
 		eventOpRepo: eventOpRepo,
 		eventAnRepo: eventAnRepo,
-	}
-}
-
-// ListEvents obtiene todos los eventos de la base de datos
-//
-// ListEvents godoc
-// @Summary      List all events
-// @Description  Get all events from the database ordered by creation time
-// @Tags         events
-// @Accept       json
-// @Produce      json
-// @Success      200  {array}   entities.EventEntity
-// @Failure      500  {object}  ErrorResponse
-// @Router       /api/v1/events [get]
-func (h *EventHandlers) ListEvents() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		limit, _ := strconv.Atoi(ctx.Query("limit"))
-		q := output.PageQuery{Limit: limit}
-		if after := ctx.Query("after"); after != "" {
-			cursor, err := output.DecodeCursor(after)
-			if err != nil {
-				ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
-				return
-			}
-			q.Cursor = cursor
-		}
-
-		page, err := h.eventRepo.FindAll(ctx.Request.Context(), q)
-		if err != nil {
-			slog.Error("handler error", "error", err, "path", ctx.FullPath())
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-		ctx.JSON(http.StatusOK, page)
-	}
-}
-
-// GetEvent obtiene un evento específico por su ID
-//
-// GetEvent godoc
-// @Summary      Get an event by ID
-// @Description  Get a single event by its UUID
-// @Tags         events
-// @Accept       json
-// @Produce      json
-// @Param        id   path      string  true  "Event ID (UUID)"
-// @Success      200  {object}  entities.EventEntity
-// @Failure      400  {object}  ErrorResponse
-// @Failure      404  {object}  ErrorResponse
-// @Router       /api/v1/events/{id} [get]
-func (h *EventHandlers) GetEvent() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		idStr := ctx.Param("id")
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid id format"})
-			return
-		}
-
-		event, err := h.eventRepo.FindByID(ctx.Request.Context(), id)
-		if err != nil {
-			if errors.Is(err, domainerrors.ErrNotFound) {
-				ctx.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
-				return
-			}
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		ctx.JSON(http.StatusOK, event)
-	}
-}
-
-// GetEventsByType filtra eventos por tipo
-//
-// GetEventsByType godoc
-// @Summary      Get events by type
-// @Description  Get all events filtered by event type
-// @Tags         events
-// @Accept       json
-// @Produce      json
-// @Param        type   path      string  true  "Event Type"
-// @Success      200  {array}   entities.EventEntity
-// @Failure      500  {object}  ErrorResponse
-// @Router       /api/v1/events/type/{type} [get]
-func (h *EventHandlers) GetEventsByType() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		eventType := ctx.Param("type")
-
-		limit, _ := strconv.Atoi(ctx.Query("limit"))
-		q := output.PageQuery{Limit: limit}
-		if after := ctx.Query("after"); after != "" {
-			cursor, err := output.DecodeCursor(after)
-			if err != nil {
-				ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
-				return
-			}
-			q.Cursor = cursor
-		}
-
-		page, err := h.eventRepo.FindByEventType(ctx.Request.Context(), eventType, q)
-		if err != nil {
-			slog.Error("handler error", "error", err, "path", ctx.FullPath())
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-			return
-		}
-		ctx.JSON(http.StatusOK, page)
 	}
 }
 

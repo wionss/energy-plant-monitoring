@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	"monitoring-energy-service/internal/domain/entities"
@@ -142,11 +143,13 @@ func (r *AnalyticsWorkerRepo) UpdateWebhookStatus(id uuid.UUID, status entities.
 			return fmt.Errorf("failed to find webhook for retry: %w", err)
 		}
 
-		// Exponential backoff: 30s, 1min, 2min, 4min, 8min
-		backoffSeconds := 30 * (1 << model.Attempts)
-		if backoffSeconds > 480 { // Cap at 8 minutes
-			backoffSeconds = 480
+		// Exponential backoff with ±33% jitter: 30s, 1min, 2min, 4min, 8min (capped)
+		base := 30 * (1 << model.Attempts)
+		if base > 480 {
+			base = 480
 		}
+		jitter := int(rand.Int63n(int64(base/3) + 1))
+		backoffSeconds := base + jitter
 		nextRetry := now.Add(time.Duration(backoffSeconds) * time.Second)
 		updates["next_retry_at"] = nextRetry
 		updates["attempts"] = gorm.Expr("attempts + 1")

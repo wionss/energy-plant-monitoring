@@ -7,23 +7,48 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"monitoring-energy-service/internal/domain/ports/output"
+
+	"github.com/sony/gobreaker"
 )
 
 type Adapter struct {
 	client *http.Client
+	cb     *gobreaker.CircuitBreaker
 }
 
 var _ output.WebhookAdapterInterface = &Adapter{}
 
 func NewAdapter(client *http.Client) *Adapter {
-	return &Adapter{
-		client: client,
-	}
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "webhook",
+		MaxRequests: 1,
+		Interval:    60 * time.Second,
+		Timeout:     30 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 5
+		},
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			slog.Warn("webhook circuit breaker state change",
+				"name", name,
+				"from", from.String(),
+				"to", to.String(),
+			)
+		},
+	})
+	return &Adapter{client: client, cb: cb}
 }
 
 func (a *Adapter) SendPayload(url string, payload any) error {
+	_, err := a.cb.Execute(func() (any, error) {
+		return nil, a.doSend(url, payload)
+	})
+	return err
+}
+
+func (a *Adapter) doSend(url string, payload any) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("error marshaling webhook payload: %w", err)
