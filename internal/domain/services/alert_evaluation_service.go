@@ -1,45 +1,78 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
+	"monitoring-energy-service/internal/domain/entities"
+	"monitoring-energy-service/internal/domain/ports/output"
 	"monitoring-energy-service/internal/infrastructure/adapters/telegram"
+
+	"github.com/tidwall/gjson"
 )
 
-// AlertRule define una regla para generar alertas basada en eventos
-type AlertRule struct {
-	Name            string  // Unique identifier: "temperature_high", "pressure_critical", etc.
-	EventType       string  // Event type to trigger this rule: "temperature", "*" for all
-	Condition       string  // Condition type: "gt", "lt", "gte", "lte", "eq", "contains"
-	FieldPath       string  // JSON path to check: "data.temperature", "data.status"
-	Threshold       float64 // Comparison value
-	ThresholdStr    string  // string comparison value for "contains" condition
-	Severity        string  // "info", "warning", "critical"
-	NotificationMsg string  // Message template for telegram notification
-}
-
-// AlertEvaluationService evalúa reglas de alertas en eventos
-// No bloquea el procesamiento: errores aquí no fallan el ingestion
+// AlertEvaluationService evaluates alert rules against incoming events.
+// It does not block event ingestion: errors here never fail the ingestion path.
 type AlertEvaluationService struct {
-	rules            []AlertRule
+	mu               sync.RWMutex
+	rules            []entities.AlertRule
 	telegramNotifier *telegram.Notifier
+	rulesRepo        output.AlertRulesRepositoryInterface
+	stopCh           chan struct{}
 }
 
-// NewAlertEvaluationService crea una nueva instancia del servicio
+// NewAlertEvaluationService creates a new instance of AlertEvaluationService.
+// It loads rules from the DB on startup, falling back to hardcoded defaults on error.
 func NewAlertEvaluationService(
 	telegramNotifier *telegram.Notifier,
+	rulesRepo output.AlertRulesRepositoryInterface,
 ) *AlertEvaluationService {
-	service := &AlertEvaluationService{
+	svc := &AlertEvaluationService{
 		telegramNotifier: telegramNotifier,
-		rules:            getDefaultAlertRules(),
+		rulesRepo:        rulesRepo,
+		stopCh:           make(chan struct{}),
 	}
-	return service
+	if rules, err := rulesRepo.FindActive(); err == nil {
+		svc.rules = rules
+	} else {
+		svc.rules = defaultAlertRules()
+		slog.Warn("failed to load alert rules from DB, using defaults", "error", err)
+	}
+	return svc
 }
 
-// EvaluateEvent evalúa todas las reglas contra un evento
-// Se ejecuta asincronamente después de persistir el evento
+// Start launches the hot-reload goroutine that refreshes rules from the DB every 30s.
+func (s *AlertEvaluationService) Start() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.stopCh:
+				return
+			case <-ticker.C:
+				if rules, err := s.rulesRepo.FindActive(); err == nil {
+					s.mu.Lock()
+					s.rules = rules
+					s.mu.Unlock()
+					slog.Debug("alert rules reloaded", "count", len(rules))
+				}
+			}
+		}
+	}()
+}
+
+// Stop signals the hot-reload goroutine to exit.
+func (s *AlertEvaluationService) Stop() {
+	close(s.stopCh)
+}
+
+// EvaluateEvent evaluates all active rules against an event.
+// Called asynchronously after event persistence.
 func (s *AlertEvaluationService) EvaluateEvent(
 	eventID string,
 	eventType string,
@@ -47,34 +80,32 @@ func (s *AlertEvaluationService) EvaluateEvent(
 	plantName string,
 	data map[string]interface{},
 ) {
-	for _, rule := range s.rules {
-		// Saltar si la regla no aplica a este tipo de evento
+	s.mu.RLock()
+	rules := s.rules
+	s.mu.RUnlock()
+
+	for _, rule := range rules {
 		if rule.EventType != "*" && rule.EventType != eventType {
 			continue
 		}
-
-		// Evaluar condición
 		if s.evaluateCondition(rule, data) {
 			s.triggerAlert(rule, plantSourceID, plantName, eventType, data)
 		}
 	}
 }
 
-// evaluateCondition evalúa si la condición de la regla se cumple
-func (s *AlertEvaluationService) evaluateCondition(rule AlertRule, data map[string]interface{}) bool {
-	// Obtener valor del campo especificado
+// evaluateCondition checks whether a rule's condition is satisfied by the event data.
+func (s *AlertEvaluationService) evaluateCondition(rule entities.AlertRule, data map[string]interface{}) bool {
 	value := s.getFieldValue(data, rule.FieldPath)
 	if value == nil {
 		return false
 	}
 
-	// Convertir valor a float64 si es posible
 	floatVal, ok := toFloat64(value)
 	if !ok && rule.Condition != "contains" && rule.Condition != "eq" {
 		return false
 	}
 
-	// Evaluar según tipo de condición
 	switch rule.Condition {
 	case "gt":
 		return floatVal > rule.Threshold
@@ -93,22 +124,28 @@ func (s *AlertEvaluationService) evaluateCondition(rule AlertRule, data map[stri
 	return false
 }
 
-// getFieldValue obtiene el valor de un campo del data JSON
-// Soporta rutas simples como "temperature" o anidadas como "data.temperature"
+// getFieldValue extracts a field value from event data using a JSONPath expression.
+// Falls back to direct key lookup for backward compatibility with flat keys.
 func (s *AlertEvaluationService) getFieldValue(data map[string]interface{}, fieldPath string) interface{} {
-	// Parse simple field path (e.g., "temperature" or "data.temperature")
-	if fieldName, ok := data[fieldPath]; ok {
-		return fieldName
+	// 1. Direct key lookup (backward compat for flat keys like "temperature")
+	if v, ok := data[fieldPath]; ok {
+		return v
 	}
-
-	// Soportar anidación con punto separador
-	// Por ahora, mantener simple. Puede extenderse para soportar objetos anidados
-	return nil
+	// 2. JSONPath via gjson: supports "data.temperature", "sensors.0.value", etc.
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	result := gjson.GetBytes(b, fieldPath)
+	if !result.Exists() {
+		return nil
+	}
+	return result.Value()
 }
 
-// triggerAlert dispara la notificación de alerta
+// triggerAlert sends a Telegram notification for the triggered rule.
 func (s *AlertEvaluationService) triggerAlert(
-	rule AlertRule,
+	rule entities.AlertRule,
 	plantSourceID string,
 	plantName string,
 	eventType string,
@@ -118,7 +155,6 @@ func (s *AlertEvaluationService) triggerAlert(
 		return
 	}
 
-	// Construir mensaje de alerta
 	alertMsg := fmt.Sprintf(
 		"🚨 ALERTA [%s] %s\n🏭 Planta: %s\n📊 Evento: %s\n📋 Severidad: %s",
 		rule.Severity, rule.NotificationMsg, plantName, eventType, rule.Severity,
@@ -136,10 +172,9 @@ func (s *AlertEvaluationService) triggerAlert(
 	}
 }
 
-// getDefaultAlertRules retorna las reglas de alerta predefinidas
-// Estas pueden eventualmente venir de BD o configuración
-func getDefaultAlertRules() []AlertRule {
-	return []AlertRule{
+// defaultAlertRules returns hardcoded fallback rules used when the DB is unavailable.
+func defaultAlertRules() []entities.AlertRule {
+	return []entities.AlertRule{
 		{
 			Name:            "high_temperature",
 			EventType:       "temperature",
@@ -172,16 +207,14 @@ func getDefaultAlertRules() []AlertRule {
 			EventType:       "status",
 			Condition:       "eq",
 			FieldPath:       "status",
-			Threshold:       0, // Will be treated as string comparison
+			Threshold:       0,
 			Severity:        "critical",
 			NotificationMsg: "Pérdida de energía en planta",
 		},
 	}
 }
 
-// Funciones auxiliares
-
-// toFloat64 intenta convertir un valor a float64
+// toFloat64 attempts to convert a value to float64.
 func toFloat64(value interface{}) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
@@ -203,12 +236,11 @@ func toFloat64(value interface{}) (float64, bool) {
 	}
 }
 
-// containsString verifica si un valor contiene una cadena
+// containsString checks whether a value contains the given substring.
 func containsString(value interface{}, searchStr string) bool {
-	switch v := value.(type) {
-	case string:
-		return strings.Contains(v, searchStr)
-	default:
+	s, ok := value.(string)
+	if !ok {
 		return false
 	}
+	return strings.Contains(s, searchStr)
 }

@@ -28,7 +28,6 @@ type Container struct {
 	kafkaAdapter          output.KafkaAdapterInterface
 	WebhookAdapter        output.WebhookAdapterInterface
 	ExampleRepository     output.ExampleRepositoryInterface
-	EventRepository       output.EventRepositoryInterface
 	EventOperationalRepo  output.EventOperationalRepositoryInterface
 	EventAnalyticalRepo   output.EventAnalyticalRepositoryInterface
 	DualEventWriter       output.DualEventWriterInterface
@@ -36,6 +35,7 @@ type Container struct {
 	PlantStatusRepository output.PlantStatusRepositoryInterface
 	AnalyticsCoordinator  output.AnalyticsCoordinatorInterface
 	TelegramNotifier      *telegram.Notifier
+	alertEvaluator        *services.AlertEvaluationService
 }
 
 func NewContainer(
@@ -55,9 +55,6 @@ func NewContainer(
 	// Initialize repositories
 	exampleRepository := repositories.NewExampleRepository(db)
 	container.ExampleRepository = exampleRepository
-
-	eventRepository := repositories.NewEventRepository(db)
-	container.EventRepository = eventRepository
 
 	energyPlantRepository := repositories.NewEnergyPlantRepository(db)
 	container.EnergyPlantRepository = energyPlantRepository
@@ -117,8 +114,11 @@ func NewContainer(
 	)
 	container.TelegramNotifier = telegramNotifier
 
-	// Initialize AlertEvaluationService for Paso 4: Real-time Alerts
-	alertEvaluator := services.NewAlertEvaluationService(telegramNotifier)
+	// Initialize AlertRulesRepository and AlertEvaluationService with hot reload
+	alertRulesRepo := repositories.NewAlertRulesRepository(db)
+	alertEvaluator := services.NewAlertEvaluationService(telegramNotifier, alertRulesRepo)
+	alertEvaluator.Start()
+	container.alertEvaluator = alertEvaluator
 
 	// Initialize EventIngestionService (domain service for business logic)
 	// CAMBIO: Extraer lógica del handler a un servicio testeable
@@ -173,11 +173,15 @@ func (c *Container) Shutdown() {
 	slog.Info("stopping dual event writer")
 	c.DualEventWriter.Stop()
 
-	// 4. Stop Telegram notifier (drains alert channel)
+	// 4. Stop alert evaluator hot-reload goroutine
+	slog.Info("stopping alert evaluator")
+	c.alertEvaluator.Stop()
+
+	// 5. Stop Telegram notifier (drains alert channel)
 	slog.Info("stopping Telegram notifier")
 	c.TelegramNotifier.Stop()
 
-	// 5. Close database connection
+	// 6. Close database connection
 	slog.Info("closing database connection")
 	sqlDB, err := c.db.DB()
 	if err != nil {
