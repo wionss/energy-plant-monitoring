@@ -233,4 +233,4 @@ For production deployments, use the provided Docker Compose configuration or Kub
 
 ## License
 
-[Specify your license here]
+[open source license
