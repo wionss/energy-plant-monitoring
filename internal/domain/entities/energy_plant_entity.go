@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// EnergyPlants representa una planta de energía en el dominio.
+// EnergyPlants represents an energy plant in the domain.
 type EnergyPlants struct {
 	ID         uuid.UUID  `json:"id"`
 	PlantName  string     `json:"plant_name"`

@@ -1,13 +1,14 @@
 package rest
 
-// event_handlers.go - Handlers REST para consultar eventos guardados en PostgreSQL
+// event_handlers.go - REST handlers for querying events stored in PostgreSQL
 //
-// PROPÓSITO:
-// Expone endpoints HTTP para consultar los eventos que fueron enviados a Kafka
-// y guardados en PostgreSQL por el IntakeHandler.
+// This package provides REST endpoints for retrieving processed events from the database,
+// supporting queries for both operational (real-time) and analytical (time-series) data.
 //
-// CAMBIO: Refactorizado para inyectar dependencias en el constructor
-// RAZÓN: Elimina el anti-patrón Service Locator (pasar el container completo)
+// Package rest provides HTTP handlers for querying events persisted in PostgreSQL.
+// Dependencies are injected via constructor parameters (not pulled from a global container),
+// enabling testability, reducing tight coupling, and allowing independent configuration
+// of different handler instances.
 
 import (
 	"errors"
@@ -23,14 +24,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// EventHandlers agrupa todos los handlers relacionados con eventos
+// EventHandlers groups all event-related handlers
 type EventHandlers struct {
 	eventOpRepo output.EventOperationalRepositoryInterface
 	eventAnRepo output.EventAnalyticalRepositoryInterface
 }
 
-// NewEventHandlers crea una nueva instancia de EventHandlers
-// Inyecta solo las dependencias necesarias (no el container completo)
+// NewEventHandlers creates a new EventHandlers instance
+// Injects only the necessary dependencies (not the entire container)
 func NewEventHandlers(
 	eventOpRepo output.EventOperationalRepositoryInterface,
 	eventAnRepo output.EventAnalyticalRepositoryInterface,
@@ -42,10 +43,10 @@ func NewEventHandlers(
 }
 
 // ============================================================================
-// HANDLERS PARA DATOS OPERACIONALES (operational.events_std)
+// HANDLERS FOR OPERATIONAL DATA (operational.events_std)
 // ============================================================================
 
-// ListOperationalEvents obtiene todos los eventos operacionales
+// ListOperationalEvents retrieves all operational events
 //
 // ListOperationalEvents godoc
 // @Summary      List operational events
@@ -79,7 +80,7 @@ func (h *EventHandlers) ListOperationalEvents() gin.HandlerFunc {
 	}
 }
 
-// GetOperationalEvent obtiene un evento operacional por ID
+// GetOperationalEvent retrieves an operational event by ID
 //
 // GetOperationalEvent godoc
 // @Summary      Get operational event by ID
@@ -115,10 +116,10 @@ func (h *EventHandlers) GetOperationalEvent() gin.HandlerFunc {
 }
 
 // ============================================================================
-// HANDLERS PARA DATOS ANALÍTICOS (analytical.events_ts - TimescaleDB)
+// HANDLERS FOR ANALYTICAL DATA (analytical.events_ts - TimescaleDB)
 // ============================================================================
 
-// ListAnalyticalEvents obtiene eventos analíticos por rango de tiempo
+// ListAnalyticalEvents retrieves analytical events by time range
 //
 // ListAnalyticalEvents godoc
 // @Summary      List analytical events by time range
@@ -164,7 +165,7 @@ func (h *EventHandlers) ListAnalyticalEvents() gin.HandlerFunc {
 	}
 }
 
-// GetHourlyAggregation obtiene agregaciones por hora usando TimescaleDB time_bucket
+// GetHourlyAggregation retrieves hourly aggregations using TimescaleDB time_bucket
 //
 // GetHourlyAggregation godoc
 // @Summary      Get hourly event aggregation
@@ -218,7 +219,7 @@ func (h *EventHandlers) GetHourlyAggregation() gin.HandlerFunc {
 	}
 }
 
-// GetDailyAggregation obtiene agregaciones por día usando TimescaleDB time_bucket
+// GetDailyAggregation retrieves daily aggregations using TimescaleDB time_bucket
 //
 // GetDailyAggregation godoc
 // @Summary      Get daily event aggregation

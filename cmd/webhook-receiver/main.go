@@ -30,11 +30,11 @@ type WebhookPayload struct {
 	CalculatedAt  time.Time `json:"calculated_at"`
 }
 
-// Store para guardar los últimos webhooks recibidos por planta
+// WebhookStore keeps the latest webhook payloads received per plant
 type WebhookStore struct {
 	mu    sync.RWMutex
 	data  map[string]WebhookPayload // key: plant_source_id
-	order []string                  // para mantener orden de llegada
+	order []string                  // to preserve arrival order
 }
 
 var store = &WebhookStore{

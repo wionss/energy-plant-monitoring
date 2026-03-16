@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// EventAnalytical representa un evento analítico (datos fríos)
-// almacenado en el esquema analytical.events_ts (TimescaleDB hypertable)
+// EventAnalytical represents an analytical event (cold data)
+// stored in the analytical.events_ts schema (TimescaleDB hypertable)
 type EventAnalytical struct {
 	CreatedAt     time.Time       `json:"created_at"`
 	ID            uuid.UUID       `json:"id"`

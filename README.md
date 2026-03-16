@@ -1,340 +1,236 @@
-# Monitoring Energy Service
+# Energy Plant Monitoring System
 
-Go microservice base template with hexagonal architecture.
+## Overview
+
+The Energy Plant Monitoring System is a robust, scalable microservice designed to monitor and analyze energy production plants in real-time. It collects sensor data from various energy sources, processes events asynchronously, and provides analytics and alerting capabilities. The system supports geospatial data for plant locations and uses time-series databases for efficient historical data storage and querying.
+
+The application follows hexagonal architecture principles, ensuring clean separation of concerns, testability, and maintainability. It integrates with Kafka for event-driven messaging, PostgreSQL with TimescaleDB for data persistence, and provides REST APIs for data access and webhook notifications for external integrations.
+
+## Key Features
+
+- **Real-time Event Processing**: Consumes events from Kafka topics containing sensor data from energy plants.
+- **Time-series Data Storage**: Utilizes TimescaleDB for efficient storage and querying of time-series data.
+- **Geospatial Support**: Integrates PostGIS for location-based queries and plant mapping.
+- **RESTful API**: Provides endpoints for retrieving plant data, events, and analytics.
+- **Webhook Notifications**: Sends real-time notifications to external systems when events occur.
+- **Alerting System**: Telegram bot integration for error notifications and validation alerts.
+- **Analytics and Reporting**: Background workers process data for analytics, continuous aggregates, and reporting.
+- **Data Retention Policies**: Automatic data cleanup based on configurable retention rules.
+- **Health Monitoring**: Built-in health checks for liveness and readiness probes.
+
+## Architecture
+
+The system is built using hexagonal (ports and adapters) architecture, which promotes loose coupling between business logic and external dependencies.
+
+### Core Components
+
+- **Domain Layer**: Contains business entities (Plants, Events, Analytics) and core business logic.
+- **Application Layer**: Defines service interfaces (ports) for use cases like event processing and data retrieval.
+- **Infrastructure Layer**: Implements adapters for external systems (Kafka, Database, HTTP clients).
+
+### Data Flow
+
+1. **Event Ingestion**: Sensor data from energy plants is published to Kafka topics.
+2. **Event Processing**: The system consumes events, validates them, and stores them in the database.
+3. **Data Storage**: Events are stored in TimescaleDB with hypertables for optimal time-series performance.
+4. **Analytics Processing**: Background workers aggregate data for analytics and reporting.
+5. **API Serving**: REST endpoints serve processed data to clients.
+6. **Notifications**: Webhooks and Telegram alerts are triggered based on event processing and errors.
+
+### Database Schema
+
+The system uses a multi-schema PostgreSQL database:
+
+- **Master Schema**: Contains plant metadata, configurations, and reference data.
+- **Operational Schema**: Stores real-time event data and current status information.
+- **Analytics Schema**: Houses aggregated data, reports, and historical analytics.
 
 ## Tech Stack
 
-- **Go 1.24** - Programming language
-- **Gin** - HTTP REST framework
-- **GORM** - PostgreSQL ORM
-- **Kafka** - Message broker (confluent-kafka-go)
-- **PostgreSQL 15** - Database with extensions:
-  - PostGIS 3.6
-  - TimescaleDB 2.24
-- **Goose** - Database migrations
-- **Atlas** - Migration generation from GORM
+- **Go 1.24**: Primary programming language
+- **Gin**: HTTP web framework for REST APIs
+- **GORM**: ORM for database interactions
+- **Kafka (confluent-kafka-go)**: Message broker for event streaming
+- **PostgreSQL 15** with extensions:
+  - **TimescaleDB 2.24**: Time-series database extension
+  - **PostGIS 3.6**: Geospatial data support
+  - **pgcrypto**: Cryptographic functions
+- **Goose**: Database migration tool
+- **Atlas**: Schema migration generation from GORM models
+- **Docker & Docker Compose**: Containerization and local development
 
 ## Project Structure
 
 ```
 ├── cmd/
-│   └── atlasloader/          # Entity loader for Atlas
+│   └── atlasloader/          # Entity loader for Atlas schema generation
 ├── db/
 │   ├── Dockerfile            # PostgreSQL image with extensions
-│   └── init-db.sql           # Initialization script
+│   └── init-db.sql           # Database initialization script
 ├── internal/
-│   ├── api/                  # Application services
-│   │   └── kafka_service.go
+│   ├── api/                  # Application services (Kafka consumer, etc.)
 │   ├── domain/
-│   │   ├── entities/         # Domain entities
-│   │   └── ports/
-│   │       ├── input/        # Service interfaces
-│   │       └── output/       # Repository/adapter interfaces
+│   │   ├── entities/         # Domain models (Plant, Event, etc.)
+│   │   └── ports/            # Service and repository interfaces
 │   └── infrastructure/
-│       ├── adapters/
-│       │   ├── http/webhook/ # Webhook adapter
-│       │   ├── kafka/        # Kafka adapter
-│       │   ├── repositories/ # GORM repositories
-│       │   └── rest/         # Gin router and handlers
-│       ├── conf/
-│       │   ├── database/     # PostgreSQL configuration
-│       │   └── kafkaconf/    # Kafka factory
-│       └── container/        # Dependency injection
-├── migrations/               # SQL migrations (Goose)
-├── .air.toml                 # Hot reload (Air)
-├── modd.conf                 # File watcher (Modd)
-├── atlas.hcl                 # Atlas configuration
-├── docker-compose.yml        # Development services
-└── main.go                   # Entry point
+│       ├── adapters/         # External system adapters
+│       │   ├── kafka/        # Kafka producer/consumer
+│       │   ├── repositories/ # Database repositories
+│       │   ├── rest/         # HTTP handlers and routing
+│       │   └── webhook/      # Webhook client
+│       ├── conf/             # Configuration factories
+│       └── container/        # Dependency injection container
+├── migrations/               # Database migration files
+├── scripts/                  # Utility scripts and test data generators
+└── main.go                   # Application entry point
 ```
 
-## Local Development
+## Local Development Setup
 
-### Requirements
+### Prerequisites
 
 - Go 1.24+
 - Docker and Docker Compose
 - Make
 
-### Install dev tools
+### Quick Start
 
-```bash
-make install-dev-tools
-```
+1. **Clone the repository and navigate to the project directory**
 
-This installs:
-- Air (hot reload)
-- Modd (file watcher)
-- Goose (migrations)
-- Atlas (migration generation)
-- Swag (Swagger documentation)
+2. **Install development tools:**
+   ```bash
+   make install-dev-tools
+   ```
 
-### Docker Services
+3. **Start infrastructure services:**
+   ```bash
+   make docker-up
+   ```
 
-```bash
-# Start services
-make docker-up
+4. **Configure environment variables:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
 
-# Stop services
-make docker-down
-```
+5. **Run database migrations:**
+   ```bash
+   make goose-up
+   ```
 
-| Service | Port | URL/Connection |
-|---------|------|----------------|
-| PostgreSQL | 5432 | `postgres://postgres:postgres@localhost:5432/monitoring_energy` |
-| pgAdmin | 5050 | http://localhost:5050 |
-| Kafka | 9092 | `localhost:9092` |
-| Kafka UI | 8080 | http://localhost:8080 |
-| Zookeeper | 2181 | `localhost:2181` |
+6. **Start the application:**
+   ```bash
+   make dev  # For development with hot reload
+   ```
 
-### Credentials
+### Available Services
 
-| Service | User | Password |
-|---------|------|----------|
-| PostgreSQL | postgres | postgres |
-| pgAdmin | admin@admin.com | admin |
+| Service | Port | Description |
+|---------|------|-------------|
+| PostgreSQL | 5432 | Main database |
+| pgAdmin | 5050 | Database administration UI |
+| Kafka | 9092 | Message broker |
+| Kafka UI | 8080 | Kafka management UI |
+| Zookeeper | 2181 | Kafka coordination service |
 
-### PostgreSQL Extensions
+## API Documentation
 
-The database includes the following extensions:
+The system provides RESTful APIs for data access and management.
 
-| Extension | Version | Description |
-|-----------|---------|-------------|
-| pgcrypto | 1.3 | Cryptographic functions |
-| PostGIS | 3.6.1 | Geospatial data |
-| TimescaleDB | 2.24.0 | Time series |
+### Core Endpoints
 
-### Run the application
-
-```bash
-# Configure environment variables
-cp .env.example .env
-
-# Development with hot reload (Air)
-make dev
-
-# Development with Modd
-make dev-modd
-
-# Run directly
-make run
-```
-
-### Build
-
-```bash
-make build
-```
-
-## Migrations
-
-### Create new migration
-
-```bash
-make migrate-create name=migration_name
-```
-
-### Apply migrations
-
-```bash
-make goose-up
-```
-
-Migrations run automatically on application startup.
-
-### Rollback
-
-```bash
-# Last migration
-make goose-down
-
-# To specific version
-make goose-down-to version=20241211000000
-```
-
-### Migration status
-
-```bash
-make goose-status
-```
-
-## REST API
-
-### Example endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | /api/v1/examples | List all |
-| GET | /api/v1/examples/:id | Get by ID |
-| POST | /api/v1/examples | Create new |
-| PUT | /api/v1/examples/:id | Update |
-| DELETE | /api/v1/examples/:id | Delete |
-
-### Health checks
-
-| Endpoint | Description |
-|----------|-------------|
-| GET /healthz | Liveness probe |
-| GET /readyz | Readiness probe |
+- `GET /api/v1/plants` - List energy plants
+- `GET /api/v1/plants/{id}` - Get plant details
+- `GET /api/v1/events` - Query events with filtering
+- `POST /api/v1/webhook` - Webhook receiver for external integrations
+- `GET /healthz` - Liveness probe
+- `GET /readyz` - Readiness probe
 
 ### Swagger Documentation
 
-Swagger UI is automatically available in development mode:
-- URL: http://localhost:9000/swagger/index.html
+Interactive API documentation is available at `http://localhost:9000/swagger/index.html` when running in development mode.
 
-Swagger docs are regenerated automatically when running `make dev`, `make dev-modd`, or `make run`.
+## Configuration
 
-## Telegram Notifications
+The application is configured via environment variables:
 
-The service can send error notifications to a Telegram bot when validation errors occur during event processing.
+### Server Configuration
+- `PORT`: Server port (default: 9000)
+- `ENVIRONMENT`: Environment (dev/prod)
 
-### Configuration
+### Database Configuration
+- `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`
+- `DATABASE_SCHEMA`: Target schema
 
-1. **Create a Telegram Bot:**
-   - Open Telegram and search for [@BotFather](https://t.me/botfather)
-   - Send `/newbot` and follow the instructions
-   - Copy the bot token provided
+### Kafka Configuration
+- `LIST_KAFKA_BROKERS`: Kafka broker addresses
+- `CONSUMER_GROUP`: Consumer group ID
+- `CONSUMER_TOPIC`: Input topic for events
+- `PRODUCER_TOPIC`: Output topic for processed events
 
-2. **Get your Chat ID:**
-   - Send a message to your bot
-   - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
-   - Look for the `chat.id` field in the response
+### Notification Configuration
+- `WEBHOOK_ENABLED`: Enable webhook notifications
+- `WEBHOOK_URL`: Webhook endpoint URL
+- `TELEGRAM_ENABLED`: Enable Telegram alerts
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token
+- `TELEGRAM_CHAT_ID`: Telegram chat ID
 
-3. **Configure Environment Variables:**
-   ```bash
-   TELEGRAM_ENABLED=true
-   TELEGRAM_BOT_TOKEN=your_bot_token_here
-   TELEGRAM_CHAT_ID=your_chat_id_here
-   ```
+## Event Processing Logic
 
-### Error Types Notified
+### Event Validation
+Events are validated upon consumption:
+- Required fields presence (e.g., `plant_source_id`)
+- UUID format validation for plant identifiers
+- Plant existence verification in database
 
-The system sends Telegram notifications for the following validation errors:
+### Error Handling
+Validation errors trigger:
+- Logging with detailed context
+- Telegram notifications (if enabled)
+- Event rejection without storage
 
-- **Invalid UUID Format:** When `plant_source_id` cannot be parsed as a valid UUID
-- **Missing Required Fields:** When `plant_source_id` is not present in the event message
-- **Non-existent Plant:** When an event references a `plant_source_id` that doesn't exist in the database
+### Data Processing
+Valid events are:
+- Stored in operational schema
+- Processed by analytics workers
+- Made available via REST APIs
+- Triggered webhooks for real-time notifications
 
-Each notification includes:
-- Timestamp
-- Error type
-- Error message
-- Context (field name, invalid value, event type, plant name)
-- Service name
+## Analytics and Workers
 
-### Example Notification
+Background workers perform:
+- **Continuous Aggregates**: Automatic data summarization for performance
+- **Data Retention**: Cleanup of old data based on policies
+- **Alert Rules**: Evaluation of conditions for notifications
+- **Geospatial Analysis**: Location-based insights and reporting
 
-```
-🚨 Error de Validación
+## Monitoring and Alerting
 
-⏰ Hora: 2026-01-11 15:30:45
-🔴 Tipo: UUID Inválido
-📝 Mensaje: Error al parsear UUID: invalid UUID format
-📋 Contexto: Campo: plant_source_id, UUID inválido: abc-123-invalid
+- **Health Checks**: Kubernetes-compatible liveness and readiness endpoints
+- **Error Notifications**: Telegram bot integration for critical errors
+- **Metrics**: Integration with Prometheus for observability
+- **Tracing**: OpenTelemetry support for distributed tracing
 
-🏢 Servicio: Monitoring Energy Service
-```
+## Deployment
 
-## Environment Variables
+The application is containerized and can be deployed using Docker:
 
 ```bash
-# Server
-PORT=9000
-ENVIRONMENT=dev
-
-# Database
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_NAME=monitoring_energy
-DATABASE_USER=postgres
-DATABASE_PASSWORD=postgres
-DATABASE_SCHEMA=public
-
-# Kafka
-LIST_KAFKA_BROKERS=localhost:9092
-CONSUMER_GROUP=monitoring-energy-group
-CONSUMER_TOPIC=events.default
-PRODUCER_TOPIC=events.output
-
-# Webhook
-WEBHOOK_ENABLED=false
-WEBHOOK_URL=
-
-# Telegram Notifications
-TELEGRAM_ENABLED=false
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_CHAT_ID=your_chat_id_here
-
-# HTTP
-HTTP_CLIENT_TIMEOUT=30
-
-# CORS
-ALLOWED_CORS_SUFFIXES=.jdc.io```
-
-## Hexagonal Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        INFRASTRUCTURE                        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │   REST API  │  │    Kafka    │  │      Webhook        │  │
-│  │   (Gin)     │  │   Adapter   │  │      Adapter        │  │
-│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
-│         │                │                     │             │
-│  ┌──────▼────────────────▼─────────────────────▼──────────┐ │
-│  │                     PORTS (Input)                       │ │
-│  │               Service Interfaces                        │ │
-│  └──────────────────────┬──────────────────────────────────┘ │
-│                         │                                    │
-│  ┌──────────────────────▼──────────────────────────────────┐ │
-│  │                      DOMAIN                              │ │
-│  │              Entities + Business Logic                   │ │
-│  └──────────────────────┬──────────────────────────────────┘ │
-│                         │                                    │
-│  ┌──────────────────────▼──────────────────────────────────┐ │
-│  │                    PORTS (Output)                        │ │
-│  │              Repository Interfaces                       │ │
-│  └──────┬───────────────┬───────────────────┬──────────────┘ │
-│         │               │                   │                │
-│  ┌──────▼──────┐ ┌──────▼──────┐ ┌──────────▼─────────────┐  │
-│  │ PostgreSQL  │ │    Kafka    │ │      External APIs     │  │
-│  │   (GORM)    │ │  Producer   │ │       (Webhook)        │  │
-│  └─────────────┘ └─────────────┘ └────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+make build
+docker build -t energy-plant-monitor .
+docker run -p 9000:9000 energy-plant-monitor
 ```
 
-## Make Commands
+For production deployments, use the provided Docker Compose configuration or Kubernetes manifests.
 
-| Command | Description |
-|---------|-------------|
-| `make dev` | Development with Air (hot reload) |
-| `make dev-modd` | Development with Modd |
-| `make run` | Run application |
-| `make build` | Build binary |
-| `make test` | Run tests |
-| `make docker-up` | Start Docker services |
-| `make docker-down` | Stop Docker services |
-| `make migrate-create name=X` | Create migration |
-| `make goose-up` | Apply migrations |
-| `make goose-down` | Rollback last migration |
-| `make goose-status` | Migration status |
-| `make install-dev-tools` | Install dev tools |
-| `make swagger` | Generate Swagger docs manually |
+## Contributing
 
+1. Follow the hexagonal architecture patterns
+2. Write tests for new functionality
+3. Update API documentation for new endpoints
+4. Ensure database migrations are properly versioned
+5. Test with realistic data volumes using the provided scripts
 
-## task
+## License
 
-1.	definir una entidad de eventos
-2.  crear un script de envio de eventos a kafka
-3.	guardar esos eventos 
-4.  get REST para ver los eventos 
-
---
-
-diseñar una base de datos de 3 o 4 schemas,  capa master capa operativa capa analitica 
-
-agregar logica, workers para gestionar la data 
-
-'''bash
-python3 charge-test.py --events 500000 --workers 10
-'''
+[Specify your license here]

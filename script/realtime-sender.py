@@ -90,18 +90,18 @@ def plant_worker(producer: Producer, plant: dict, interval: float):
     while not stop_event.is_set():
         try:
             event = generate_event(plant)
-            # CAMBIO: Usar plant ID como partition key para garantizar orden por planta
-            # RAZÓN: Todos los eventos de la misma planta van a la misma partición
+            # Use plant ID as the partition key to guarantee ordering per plant
+            # This ensures all events for the same plant go to the same partition
             key = str(plant["id"])
             payload = json.dumps(event)
 
-            # CAMBIO CLAVE: Agregamos callback=delivery_report
+            # Add callback=delivery_report for delivery notifications
             producer.produce(TOPIC, key=key, value=payload, callback=delivery_report)
             
-            # Poll sirve para disparar el callback de eventos PREVIOS
+            # Poll is required to trigger callbacks for previous events
             producer.poll(0)
 
-            # Nota: Seguimos contando aquí para la UI, pero el delivery_report dirá la verdad
+            # Note: We keep counting here for the UI, but delivery_report is the source of truth
             with lock:
                 counters[plant["id"]] += 1
                 count = counters[plant["id"]]
@@ -122,7 +122,7 @@ def main():
     parser.add_argument("--interval", type=float, default=1.0)
     args = parser.parse_args()
 
-    print(f"Iniciando Producer hacia: {KAFKA_BROKER} (Topic: {TOPIC})")
+    print(f"Starting producer to: {KAFKA_BROKER} (Topic: {TOPIC})")
 
     conf = {
         'bootstrap.servers': KAFKA_BROKER,

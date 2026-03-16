@@ -20,12 +20,12 @@ const (
 type HourlyPlantStats struct {
 	Bucket        time.Time
 	PlantSourceId uuid.UUID
-	// Campos desnormalizados de master.energy_plants
+	// Denormalized fields from master.energy_plants
 	PlantName string
 	PlantType string
 	Latitude  *float64
 	Longitude *float64
-	// Métricas calculadas
+	// Calculated metrics
 	AvgPowerGen      *float64
 	AvgPowerCon      *float64
 	AvgEfficiency    *float64

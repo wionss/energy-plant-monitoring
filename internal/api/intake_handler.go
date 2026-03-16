@@ -11,11 +11,11 @@ import (
 	"monitoring-energy-service/internal/infrastructure/adapters/metrics"
 )
 
-// IntakeHandler procesa mensajes consumidos desde Kafka
-// CAMBIO: Refactorizado para usar EventIngestionService
-// RAZÓN: Separación clara de responsabilidades:
-//   - IntakeHandler: Solo deserialización (infraestructura)
-//   - EventIngestionService: Lógica de negocio completa
+// IntakeHandler processes messages consumed from Kafka.
+// IntakeHandler deserializes Kafka intake messages and delegates business logic processing.
+// Uses EventIngestionService to maintain separation of concerns: this handler handles
+// only deserialization and error classification (infrastructure), while the service
+// manages event persistence, validation, alert evaluation, and status updates (domain).
 type IntakeHandler struct {
 	ingestionService *services.EventIngestionService
 }
@@ -28,9 +28,9 @@ func NewIntakeHandler(ingestionService *services.EventIngestionService) *IntakeH
 	}
 }
 
-// HandleMessage deserializa el evento y lo procesa a través del servicio de dominio
+// HandleMessage deserializes the message and processes it via the domain service
 func (h *IntakeHandler) HandleMessage(ctx context.Context, message []byte) error {
-	// Deserializar el JSON
+	// Deserialize JSON
 	var data map[string]interface{}
 	if err := json.Unmarshal(message, &data); err != nil {
 		slog.Error("invalid JSON message", "error", err)
@@ -38,6 +38,6 @@ func (h *IntakeHandler) HandleMessage(ctx context.Context, message []byte) error
 		return domainerrors.NewPermanentError("invalid JSON", err)
 	}
 
-	// Delegar toda la lógica de negocio al servicio
+	// Delegate all business logic to the service
 	return h.ingestionService.ProcessEvent(ctx, message, data)
 }

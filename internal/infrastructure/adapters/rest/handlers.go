@@ -30,12 +30,12 @@ type ErrorResponse struct {
 	Error string `json:"error" example:"error message"`
 }
 
-// ExampleHandlers agrupa todos los handlers relacionados con ejemplos
+// ExampleHandlers groups all handlers related to examples
 type ExampleHandlers struct {
 	exampleRepo output.ExampleRepositoryInterface
 }
 
-// NewExampleHandlers crea una nueva instancia de ExampleHandlers
+// NewExampleHandlers creates a new ExampleHandlers instance
 func NewExampleHandlers(exampleRepo output.ExampleRepositoryInterface) *ExampleHandlers {
 	return &ExampleHandlers{
 		exampleRepo: exampleRepo,

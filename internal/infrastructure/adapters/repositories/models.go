@@ -72,13 +72,13 @@ func ToAlertRuleFromModel(m *AlertRuleModel) entities.AlertRule {
 
 // EventOperationalModel is the GORM persistence model for operational events.
 type EventOperationalModel struct {
-	ID            uuid.UUID        `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
-	EventType     string           `gorm:"type:varchar(100);index:idx_op_event_type;not null"`
-	PlantSourceId uuid.UUID        `gorm:"type:uuid;index:idx_op_plant_source_id;not null"`
-	Source        string           `gorm:"type:varchar(255)"`
-	Data          datatypes.JSON   `gorm:"type:jsonb;not null"`
-	Metadata      datatypes.JSON   `gorm:"type:jsonb"`
-	CreatedAt     time.Time        `gorm:"autoCreateTime;index:idx_op_created_at"`
+	ID            uuid.UUID         `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	EventType     string            `gorm:"type:varchar(100);index:idx_op_event_type;not null"`
+	PlantSourceId uuid.UUID         `gorm:"type:uuid;index:idx_op_plant_source_id;not null"`
+	Source        string            `gorm:"type:varchar(255)"`
+	Data          datatypes.JSON    `gorm:"type:jsonb;not null"`
+	Metadata      datatypes.JSON    `gorm:"type:jsonb"`
+	CreatedAt     time.Time         `gorm:"autoCreateTime;index:idx_op_created_at"`
 	PlantSource   EnergyPlantsModel `gorm:"foreignKey:PlantSourceId;references:ID"`
 }
 

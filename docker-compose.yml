@@ -94,10 +94,7 @@ services:
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
       DYNAMIC_CONFIG_ENABLED: "true"
 
-  # CAMBIO: Servicio API agregado (líneas 97-121)
-  # RAZÓN: Contenedor opcional para correr la aplicación Go en Docker
-  # NOTA: Actualmente NO se usa porque corremos la app directamente con "go run main.go"
-  # pero está disponible para deploy en producción
+  # Optional containerized API service for production deployments
   # api:
   #   profiles: ["dev"]
   #   build:
@@ -109,15 +106,15 @@ services:
   #   environment:
   #     PORT: 9000
   #     ENVIRONMENT: dev
-  #     DATABASE_HOST: db  # CAMBIO: Usa nombre del servicio de Docker Compose
+  #     DATABASE_HOST: db  # Uses Docker Compose service names for internal network resolution
   #     DATABASE_PORT: 5432
   #     DATABASE_NAME: monitoring_energy
   #     DATABASE_USER: postgres
   #     DATABASE_PASSWORD: postgres
   #     DATABASE_SCHEMA: public
-  #     LIST_KAFKA_BROKERS: kafka:29092  # CAMBIO: Usa puerto interno de Kafka
+  #     LIST_KAFKA_BROKERS: kafka:29092  # Connects to Kafka's internal broker port (29092) for inter-container communication
   #     CONSUMER_GROUP: monitoring-energy-group
-  #     CONSUMER_TOPIC: intake  # CAMBIO: Topic correcto para consumir eventos
+  #     CONSUMER_TOPIC: intake  # Consumes from the "intake" topic for event processing
   #     PRODUCER_TOPIC: intake
   #   depends_on:
   #     - db

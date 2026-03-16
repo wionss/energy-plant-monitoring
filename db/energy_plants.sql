@@ -1,5 +1,5 @@
--- Insertar plantas de energía en el esquema master
--- NOTA: Ejecutar después de aplicar la migración add_geo_and_cache_fields
+-- Insert energy plants into the master schema
+-- NOTE: Run after applying the add_geo_and_cache_fields migration
 INSERT INTO master.energy_plants (id, plant_name, plant_type, location, latitude, longitude, capacity_mw, created_at) VALUES
 ('1e2d3c4b-5a6f-7e8d-9c0b-1a2b3c4d5e6f', 'Solar Plant Pasto', 'solar', 'Pasto, Nariño, Colombia', 1.2136, -77.2811, 150.0, now()),
 ('2f3e4d5c-6b7a-8c9d-0e1f-2b3c4d5e6f7a', 'Wind Farm Cali', 'wind', 'Cali, Valle del Cauca, Colombia', 3.4516, -76.5320, 200.0, now()),

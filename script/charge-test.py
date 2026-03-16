@@ -47,7 +47,7 @@ def generate_backfill_event():
         "efficiency_percent": round(random.uniform(75, 99), 2),
         "temperature_celsius": round(random.uniform(20, 50), 2),
         "status": "warning" if is_alert else random.choice(STATUSES),
-        "timestamp": get_random_timestamp(days_back=90), # <--- CLAVE: Fechas pasadas
+        "timestamp": get_random_timestamp(days_back=90), # key: use a past timestamp
         "metadata": {
             "sensor_id": fake.uuid4(),
             "backfill": True
@@ -58,8 +58,8 @@ def generate_backfill_event():
 def produce_load(producer, num_events):
     for _ in range(num_events):
         event = generate_backfill_event()
-        # CAMBIO: Usar plant_source_id como partition key para garantizar orden por planta
-        # RAZÓN: Todos los eventos de la misma planta van a la misma partición
+        # Use plant_source_id as the partition key to guarantee ordering per plant
+        # This ensures all events for the same plant go to the same partition
         key = str(event['plant_source_id'])
         payload = json.dumps(event)
         
@@ -73,8 +73,8 @@ def produce_load(producer, num_events):
 
 def main():
     parser = argparse.ArgumentParser(description="Backfill Generator")
-    parser.add_argument("--events", type=int, default=500000, help="Total de eventos")
-    parser.add_argument("--workers", type=int, default=10, help="Hilos paralelos")
+    parser.add_argument("--events", type=int, default=500000, help="Total number of events")
+    parser.add_argument("--workers", type=int, default=10, help="Number of parallel worker threads")
     args = parser.parse_args()
 
     conf = {

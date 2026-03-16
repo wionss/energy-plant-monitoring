@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// EventOperational representa un evento operacional (datos calientes)
-// almacenado en el esquema operational.events_std (PostgreSQL estándar)
+// EventOperational represents an operational event (hot data)
+// stored in the operational.events_std schema (standard PostgreSQL)
 type EventOperational struct {
 	ID            uuid.UUID       `json:"id"`
 	EventType     string          `json:"event_type"`

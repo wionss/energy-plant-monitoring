@@ -18,11 +18,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// EventIngestionService encapsula toda la lógica de negocio para procesar eventos
-// PROPÓSITO: Extraer la lógica del IntakeHandler, haciendo el código:
-// - Testeable sin Kafka
-// - Reutilizable en otros contextos
-// - Enfocado en reglas de negocio, no en infraestructura
+// EventIngestionService encapsulates all business logic for processing events.
+// PURPOSE: Extract logic from IntakeHandler, making the code:
+// - Testable without Kafka
+// - Reusable in other contexts
+// - Focused on business rules, not infrastructure
 type EventIngestionService struct {
 	dualWriter            output.DualEventWriterInterface
 	energyPlantRepository output.EnergyPlantRepositoryInterface
@@ -32,7 +32,7 @@ type EventIngestionService struct {
 	useAsyncWrite         bool
 }
 
-// NewEventIngestionService crea una nueva instancia del servicio
+// NewEventIngestionService creates a new service instance
 func NewEventIngestionService(
 	dualWriter output.DualEventWriterInterface,
 	energyPlantRepository output.EnergyPlantRepositoryInterface,
@@ -51,58 +51,58 @@ func NewEventIngestionService(
 	}
 }
 
-// deterministicID genera un UUID v5 a partir del hash SHA-256 del payload
-// Garantiza idempotencia: el mismo mensaje siempre produce el mismo ID
+// deterministicID generates a UUID v5 from the SHA-256 hash of the payload
+// Guarantees idempotency: the same message always produces the same ID
 func deterministicID(payload []byte) uuid.UUID {
 	hash := sha256.Sum256(payload)
 	return uuid.NewSHA1(uuid.NameSpaceDNS, hash[:])
 }
 
-// ProcessEvent es el punto de entrada principal del servicio
-// Orquesta todas las validaciones, transformaciones y persistencias
+// ProcessEvent is the main entry point of the service
+// Orchestrates all validations, transformations, and persistence
 func (s *EventIngestionService) ProcessEvent(ctx context.Context, payload []byte, data map[string]interface{}) error {
 	startTime := time.Now()
 	log := tracing.Logger(ctx)
 
-	// Validar estructura básica del JSON
+	// Validate basic JSON structure
 	if data == nil || len(data) == 0 {
 		log.Error("empty event data")
 		metrics.EventsValidationErrors.WithLabelValues("empty_data").Inc()
 		return domainerrors.NewPermanentError("empty event data", nil)
 	}
 
-	// Extraer y validar plant_source_id
+	// Extract and validate plant_source_id
 	plantSourceId, eventType, source, err := s.extractAndValidatePlantInfo(data)
 	if err != nil {
 		return err
 	}
 
-	// Validar que la planta existe en BD
+	// Validate that the plant exists in the database
 	if err := s.validatePlantExists(ctx, plantSourceId); err != nil {
 		return err
 	}
 
-	// Validar datos del evento (reglas de negocio específicas)
+	// Validate event data (business-specific rules)
 	if err := s.validateEventData(data, eventType); err != nil {
 		return err
 	}
 
-	// Crear eventos para persistencia (operational y analytical)
+	// Create events for persistence (operational and analytical)
 	eventOp, eventAn, err := s.buildEventEntities(payload, data, plantSourceId, eventType, source)
 	if err != nil {
 		return err
 	}
 
-	// Persistir eventos en BD
+	// Persist events in the database
 	if err := s.persistEvents(ctx, eventOp, eventAn); err != nil {
 		return err
 	}
 
-	// Actualizar Digital Twin (estado actual de planta)
+	// Update Digital Twin (current plant status)
 	s.updatePlantStatus(ctx, plantSourceId, eventType, source, payload, data)
 
-	// Paso 4: Evaluar alertas en tiempo real (asincronamente para no bloquear)
-	// Las alertas se envían asincronamente a través de Telegram sin bloquear el evento principal
+	// Step 4: Evaluate real-time alerts (asynchronously to not block)
+	// Alert notifications are sent asynchronously via Telegram without blocking the main event
 	if s.alertEvaluator != nil {
 		plantName := "unknown"
 		if pn, ok := data["plant_name"].(string); ok {
@@ -118,28 +118,28 @@ func (s *EventIngestionService) ProcessEvent(ctx context.Context, payload []byte
 		)
 	}
 
-	// Registrar métricas de éxito
+	// Registrate successful ingestion in metrics
 	metrics.EventsIngestedTotal.WithLabelValues(eventType, plantSourceId.String(), "success").Inc()
 	metrics.EventProcessingDuration.WithLabelValues(eventType).Observe(time.Since(startTime).Seconds())
 
 	return nil
 }
 
-// extractAndValidatePlantInfo extrae y valida los campos principales
+// extractAndValidatePlantInfo extracts and validates main fields
 func (s *EventIngestionService) extractAndValidatePlantInfo(data map[string]interface{}) (uuid.UUID, string, string, error) {
-	// Extraer event_type
+	// Extract event_type
 	eventType := "unknown"
 	if et, ok := data["event_type"].(string); ok {
 		eventType = et
 	}
 
-	// Extraer plant_name para source
+	// Extract plant_name for source
 	source := "kafka-intake"
 	if plantName, ok := data["plant_name"].(string); ok {
 		source = plantName
 	}
 
-	// Extraer y validar plant_source_id
+	// Extract and validate plant_source_id
 	if plantSourceIdStr, ok := data["plant_source_id"].(string); ok {
 		plantSourceId, err := uuid.Parse(plantSourceIdStr)
 		if err != nil {
@@ -155,18 +155,18 @@ func (s *EventIngestionService) extractAndValidatePlantInfo(data map[string]inte
 		return plantSourceId, eventType, source, nil
 	}
 
-	// plant_source_id es obligatorio
+	// plant_source_id is required
 	slog.Error("plant_source_id not found in message")
 	metrics.EventsValidationErrors.WithLabelValues("missing_plant_id").Inc()
 	s.telegramNotifier.SendValidationError(
 		"plant_source_id",
-		"campo ausente",
-		fmt.Sprintf("El campo plant_source_id no está presente en el mensaje. EventType: %s, PlantName: %s", eventType, source),
+		"missing field",
+		fmt.Sprintf("The plant_source_id field is not present in the message. EventType: %s, PlantName: %s", eventType, source),
 	)
 	return uuid.Nil, "", "", domainerrors.NewPermanentError("missing plant_source_id field", nil)
 }
 
-// validatePlantExists verifica que la planta existe en la BD
+// validatePlantExists checks that the plant exists in the database
 func (s *EventIngestionService) validatePlantExists(ctx context.Context, plantSourceId uuid.UUID) error {
 	log := tracing.Logger(ctx)
 	exists, err := s.energyPlantRepository.Exists(ctx, plantSourceId)
@@ -196,10 +196,10 @@ func (s *EventIngestionService) validatePlantExists(ctx context.Context, plantSo
 	return nil
 }
 
-// validateEventData valida los campos específicos del evento
+// validateEventData validate event data with business rules (non-structural validation)
 func (s *EventIngestionService) validateEventData(data map[string]interface{}, eventType string) error {
-	// Intentar parsear como EventData para validaciones estructurales
-	// Si no se puede parsear, no es un error fatal
+	// Try parsing as EventData for structural validation
+	// If parsing fails, it is not considered a fatal error
 	rawData, err := json.Marshal(data)
 	if err != nil {
 		slog.Warn("could not re-marshal event data for validation", "error", err)
@@ -223,7 +223,7 @@ func (s *EventIngestionService) validateEventData(data map[string]interface{}, e
 	return nil
 }
 
-// buildEventEntities construye las entidades para persistencia
+// buildEventEntities builds entities for persistence
 func (s *EventIngestionService) buildEventEntities(
 	payload []byte,
 	data map[string]interface{},
@@ -231,7 +231,7 @@ func (s *EventIngestionService) buildEventEntities(
 	eventType string,
 	source string,
 ) (*entities.EventOperational, *entities.EventAnalytical, error) {
-	// Usar el payload raw para data JSON
+	// Use raw payload as JSON data
 	dataJSON := json.RawMessage(payload)
 
 	// Generar ID idempotente
@@ -268,7 +268,7 @@ func (s *EventIngestionService) buildEventEntities(
 	return eventOp, eventAn, nil
 }
 
-// persistEvents persiste los eventos en BD
+// persistEvents persist events in the database, using async write if enabled
 func (s *EventIngestionService) persistEvents(
 	ctx context.Context,
 	eventOp *entities.EventOperational,
@@ -293,8 +293,8 @@ func (s *EventIngestionService) persistEvents(
 	return nil
 }
 
-// updatePlantStatus actualiza el Digital Twin (estado actual de planta)
-// No-blocking: errores aquí no fallan el procesamiento del evento
+// updatePlantStatus update the Digital Twin (actual state of the plant) based on the event data
+// No-blocking: This is a best-effort update. If it fails, we log the error but do not fail the entire event processing.
 func (s *EventIngestionService) updatePlantStatus(
 	ctx context.Context,
 	plantSourceId uuid.UUID,

@@ -1,13 +1,11 @@
 package rest
 
-// test_handlers.go - Handlers REST para probar funcionalidades del sistema
+// test_handlers.go - REST handlers for testing system functionality
 //
-// PROPÓSITO:
-// Expone endpoints HTTP para probar el envío de notificaciones a Telegram
-// simulando mensajes como los que llegan desde Kafka.
-//
-// CAMBIO: Refactorizado para inyectar dependencias
-// RAZÓN: Elimina el anti-patrón Service Locator
+// Package rest provides HTTP handlers for testing notifications and event queries.
+// Dependencies are injected directly into handler constructors (not retrieved from
+// a global Service Locator), enabling unit testing with mocked repositories and
+// improving composability across different deployment scenarios.
 
 import (
 	"fmt"
@@ -20,14 +18,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestIntakeRequest representa el payload para probar el intake
+// TestIntakeRequest represents the payload to test intake
 type TestIntakeRequest struct {
 	EventType     string `json:"event_type" example:"power_reading"`
 	PlantName     string `json:"plant_name" example:"planta_solar_1"`
 	PlantSourceID string `json:"plant_source_id" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
-// TestIntakeResponse representa la respuesta del endpoint de prueba
+// TestIntakeResponse represents the test endpoint response
 type TestIntakeResponse struct {
 	Success      bool   `json:"success"`
 	Message      string `json:"message"`
@@ -35,13 +33,13 @@ type TestIntakeResponse struct {
 	Error        string `json:"error,omitempty"`
 }
 
-// TestHandlers agrupa todos los handlers de prueba
+// TestHandlers groups all test handlers
 type TestHandlers struct {
 	energyPlantRepo  output.EnergyPlantRepositoryInterface
 	telegramNotifier *telegram.Notifier
 }
 
-// NewTestHandlers crea una nueva instancia de TestHandlers
+// NewTestHandlers creates a new TestHandlers instance
 func NewTestHandlers(
 	energyPlantRepo output.EnergyPlantRepositoryInterface,
 	telegramNotifier *telegram.Notifier,
@@ -52,7 +50,7 @@ func NewTestHandlers(
 	}
 }
 
-// TestIntake simula el procesamiento de un mensaje de Kafka para probar validaciones
+// TestIntake simulates processing a Kafka message to test validations
 //
 // TestIntake godoc
 // @Summary      Test intake message processing
@@ -77,13 +75,13 @@ func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 			return
 		}
 
-		// Validar que se proporcionó plant_source_id
+		// Validate that plant_source_id was provided
 		if req.PlantSourceID == "" {
-			// Notificar campo faltante a Telegram
+			// Notify missing field via Telegram
 			telegramErr := h.telegramNotifier.SendValidationError(
 				"plant_source_id",
-				"campo ausente",
-				fmt.Sprintf("El campo plant_source_id no está presente en el mensaje. EventType: %s, PlantName: %s", req.EventType, req.PlantName),
+				"missing field",
+				fmt.Sprintf("The plant_source_id field is not present in the message. EventType: %s, PlantName: %s", req.EventType, req.PlantName),
 			)
 
 			ctx.JSON(http.StatusBadRequest, TestIntakeResponse{
@@ -95,14 +93,14 @@ func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 			return
 		}
 
-		// Validar formato UUID
+		// Validate UUID format
 		plantSourceID, err := uuid.Parse(req.PlantSourceID)
 		if err != nil {
-			// Notificar error de UUID inválido a Telegram
+			// Notify invalid UUID error via Telegram
 			telegramErr := h.telegramNotifier.SendUUIDError(
 				"plant_source_id",
 				req.PlantSourceID,
-				fmt.Sprintf("Error al parsear UUID: %v. EventType: %s, PlantName: %s", err, req.EventType, req.PlantName),
+				fmt.Sprintf("Failed to parse UUID: %v. EventType: %s, PlantName: %s", err, req.EventType, req.PlantName),
 			)
 
 			ctx.JSON(http.StatusBadRequest, TestIntakeResponse{
@@ -114,7 +112,7 @@ func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 			return
 		}
 
-		// Validar que la planta existe en la base de datos
+		// Validate that the plant exists in the database
 		exists, err := h.energyPlantRepo.Exists(ctx.Request.Context(), plantSourceID)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, TestIntakeResponse{
@@ -126,7 +124,7 @@ func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 		}
 
 		if !exists {
-			// Notificar planta inexistente a Telegram
+			// Notify non-existent plant via Telegram
 			telegramErr := h.telegramNotifier.SendValidationError(
 				"plant_source_id",
 				plantSourceID.String(),
@@ -142,7 +140,7 @@ func (h *TestHandlers) TestIntake() gin.HandlerFunc {
 			return
 		}
 
-		// Todas las validaciones pasaron
+		// all validations passed
 		ctx.JSON(http.StatusOK, TestIntakeResponse{
 			Success:      true,
 			Message:      fmt.Sprintf("All validations passed for plant %s", plantSourceID),

@@ -10,17 +10,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// PlantStatusHandlers agrupa todos los handlers relacionados con el estado de plantas
-type PlantStatusHandlers struct {
+// PlantStatusHandlers groups all handlers related to plant status
+ type PlantStatusHandlers struct {
 	plantStatusRepo output.PlantStatusRepositoryInterface
-}
+ }
 
-// NewPlantStatusHandlers crea una nueva instancia de PlantStatusHandlers
-func NewPlantStatusHandlers(plantStatusRepo output.PlantStatusRepositoryInterface) *PlantStatusHandlers {
+ // NewPlantStatusHandlers creates a new PlantStatusHandlers instance
+ func NewPlantStatusHandlers(plantStatusRepo output.PlantStatusRepositoryInterface) *PlantStatusHandlers {
 	return &PlantStatusHandlers{
 		plantStatusRepo: plantStatusRepo,
 	}
-}
+ }
 
 // ListPlantStatus returns the current status of all plants (Digital Twin)
 // @Summary List current status of all plants

@@ -8,15 +8,17 @@ import (
 
 // SetupRoutes configura todas las rutas REST de la aplicación
 //
-// CAMBIO: Refactorizado para inyectar dependencias directamente en los handlers
-// RAZÓN: Elimina el anti-patrón Service Locator (pasar el container completo)
+// SetupRoutes initializes all REST routes with explicit dependency injection.
+// Each handler receives only its required dependencies, avoiding tight coupling to
+// a global container and enabling independent testing and easier refactoring of
+// individual endpoints.
 func SetupRoutes(router *gin.RouterGroup, c *container.Container) {
 	rateLimiter := NewRateLimiter()
 
 	api := router.Group("/api/v1")
 	api.Use(RequestIDMiddleware(), rateLimiter.Middleware())
 	{
-		// Inicializar handlers con sus dependencias específicas
+		// Inialize handlers with explicit dependencies (not from global container)
 		exampleHandlers := NewExampleHandlers(c.ExampleRepository)
 		eventHandlers := NewEventHandlers(c.EventOperationalRepo, c.EventAnalyticalRepo)
 		plantStatusHandlers := NewPlantStatusHandlers(c.PlantStatusRepository)

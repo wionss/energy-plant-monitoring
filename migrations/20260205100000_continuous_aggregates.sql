@@ -1,6 +1,6 @@
 -- +goose NO TRANSACTION
 -- +goose Up
--- Paso 6: TimescaleDB Continuous Aggregates for Analytics Performance
+-- Step 6: TimescaleDB Continuous Aggregates for Analytics Performance
 -- Pre-aggregates hourly event statistics to avoid repeated calculations
 -- NOTE: named events_hourly_agg to avoid collision with the worker's hourly_plant_stats table
 

@@ -121,7 +121,10 @@ func NewContainer(
 	container.alertEvaluator = alertEvaluator
 
 	// Initialize EventIngestionService (domain service for business logic)
-	// CAMBIO: Extraer lógica del handler a un servicio testeable
+	// EventIngestionService encapsulates event processing logic (validation, persistence,
+	// alert evaluation, and status updates) separately from message deserialization.
+	// This separation improves testability and allows the domain service to be reused
+	// across different transport protocols (Kafka, HTTP, gRPC).
 	eventIngestionService := services.NewEventIngestionService(
 		dualWriter,
 		energyPlantRepository,

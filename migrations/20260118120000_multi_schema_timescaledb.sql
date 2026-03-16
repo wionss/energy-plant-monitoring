@@ -1,11 +1,11 @@
 -- +goose Up
 -- Migration: Multi-Schema Architecture with TimescaleDB
--- Schemas: master (datos maestros), operational (datos calientes), analytical (datos fríos)
--- NOTA: Los esquemas ya fueron creados en 20260110171050_bootstrap_schemas.sql
--- NOTA: master.energy_plants ya fue creada en la migración inicial
+-- Schemas: master (master data), operational (hot data), analytical (cold data)
+-- NOTE: Schemas were already created in 20260110171050_bootstrap_schemas.sql
+-- NOTE: master.energy_plants was already created in the initial migration
 
 -- =============================================================================
--- PASO 1: Crear tabla operational.events_std (PostgreSQL estándar)
+-- STEP 1: Create operational.events_std table (standard PostgreSQL)
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS operational.events_std (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_op_plant_source_id ON operational.events_std(plan
 CREATE INDEX IF NOT EXISTS idx_op_created_at ON operational.events_std(created_at DESC);
 
 -- =============================================================================
--- PASO 2: Crear tabla analytical.events_ts
+-- STEP 2: Create analytical.events_ts table
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS analytical.events_ts (
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -39,11 +39,11 @@ CREATE INDEX IF NOT EXISTS idx_an_event_type ON analytical.events_ts(event_type)
 CREATE INDEX IF NOT EXISTS idx_an_plant_source_id ON analytical.events_ts(plant_source_id);
 
 -- =============================================================================
--- PASO 2b: Convertir a TimescaleDB hypertable (solo si la extensión YA está instalada)
+-- STEP 2b: Convert to TimescaleDB hypertable (only if the extension is already installed)
 -- =============================================================================
--- NOTA: No intentamos CREATE EXTENSION aquí porque puede causar desconexión si
--- shared_preload_libraries no está configurado. TimescaleDB debe ser configurado
--- manualmente en el servidor antes de ejecutar esta migración.
+-- NOTE: We do not attempt CREATE EXTENSION here because it may cause a disconnection if
+-- shared_preload_libraries is not configured. TimescaleDB must be configured on the server
+-- before running this migration.
 -- +goose StatementBegin
 DO $$
 BEGIN
@@ -59,20 +59,20 @@ END $$;
 -- +goose StatementEnd
 
 -- =============================================================================
--- PASO 3: Migrar datos existentes (si la tabla events existe)
+-- STEP 3: Migrate existing data (if the table events exists)
 -- =============================================================================
 -- +goose StatementBegin
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'events') THEN
-        -- Migrar últimos 30 días a operational
+        -- Migrate last 30 days of data to operational.events_std
         INSERT INTO operational.events_std (id, event_type, plant_source_id, source, data, metadata, created_at)
         SELECT id, event_type, plant_source_id, source, data, metadata, created_at
         FROM public.events
         WHERE created_at >= NOW() - INTERVAL '30 days'
         ON CONFLICT (id) DO NOTHING;
 
-        -- Migrar todo a analytical
+        -- Migrate all data to analytical.events_ts (if hypertable, it will handle chunking)
         INSERT INTO analytical.events_ts (created_at, id, event_type, plant_source_id, source, data, metadata)
         SELECT created_at, id, event_type, plant_source_id, source, data, metadata
         FROM public.events
@@ -86,12 +86,12 @@ END $$;
 -- +goose StatementEnd
 
 -- =============================================================================
--- PASO 4: Eliminar tabla legacy (opcional - comentado por seguridad)
+-- STEP 4: Drop legacy table (optional - commented out for safety)
 -- =============================================================================
 -- DROP TABLE IF EXISTS public.events;
 
 -- =============================================================================
--- PASO 5: Configurar compresión para hypertable (opcional)
+-- STEP 5: Configure compression for hypertable (optional)
 -- =============================================================================
 -- ALTER TABLE analytical.events_ts SET (
 --     timescaledb.compress,
@@ -100,8 +100,8 @@ END $$;
 -- SELECT add_compression_policy('analytical.events_ts', INTERVAL '7 days');
 
 -- +goose Down
--- Revertir migración
+-- Revert migration: Drop new tables and indexes, but keep master.energy_plants intact
 
--- Eliminar tablas de nuevos esquemas
+-- Eliminate analytical and operational tables
 DROP TABLE IF EXISTS analytical.events_ts;
 DROP TABLE IF EXISTS operational.events_std;

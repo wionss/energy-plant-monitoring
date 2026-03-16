@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// EventEntity representa un evento de energía (legacy, tabla "events").
+// EventEntity represents an energy event (legacy table "events").
 type EventEntity struct {
 	ID            uuid.UUID       `json:"id"`
 	EventType     string          `json:"event_type"`

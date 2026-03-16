@@ -212,8 +212,8 @@ func (w *DualEventWriter) handleSpillover(rawData []byte, reason string) {
 }
 
 // operationalWorker processes events from the operational channel in batches using pgx.CopyFrom
-// CAMBIO: Reemplazar GORM.CreateInBatches con pgx.CopyFrom para +10x velocidad
-// RAZÓN: Las tablas append-only se benefician enormemente del comando COPY nativo de PostgreSQL
+// Use pgx.CopyFrom instead of GORM CreateInBatches for significantly better performance.
+// Append-only tables benefit greatly from PostgreSQL's native COPY command.
 func (w *DualEventWriter) operationalWorker(id int) {
 	defer w.wg.Done()
 
@@ -229,7 +229,7 @@ func (w *DualEventWriter) operationalWorker(id int) {
 		start := time.Now()
 		count := len(batch)
 
-		// Usar pgx.CopyFrom para mejor performance
+		// Use pgx.CopyFrom to improve performance
 		err := w.copyOperationalBatch(batch)
 		if err != nil {
 			slog.Error("operational batch write failed",
@@ -282,7 +282,7 @@ func (w *DualEventWriter) operationalWorker(id int) {
 }
 
 // analyticalWorker processes events from the analytical channel in batches using pgx.CopyFrom
-// CAMBIO: Reemplazar GORM.CreateInBatches con pgx.CopyFrom para +10x velocidad
+// Use pgx.CopyFrom instead of GORM CreateInBatches for significantly better performance.
 func (w *DualEventWriter) analyticalWorker(id int) {
 	defer w.wg.Done()
 
@@ -298,7 +298,7 @@ func (w *DualEventWriter) analyticalWorker(id int) {
 		start := time.Now()
 		count := len(batch)
 
-		// Usar pgx.CopyFrom para mejor performance
+		// Use pgx.CopyFrom for better performance
 		err := w.copyAnalyticalBatch(batch)
 		if err != nil {
 			slog.Error("analytical batch write failed",

@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	rateLimit       = 100             // requests per second per IP
-	burstLimit      = 20              // burst capacity
+	rateLimit       = 100 // requests per second per IP
+	burstLimit      = 20  // burst capacity
 	cleanupAge      = 10 * time.Minute
 	cleanupInterval = 5 * time.Minute
 )

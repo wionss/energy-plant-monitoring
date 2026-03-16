@@ -49,21 +49,21 @@ type AlertRulesRepositoryInterface interface {
 	FindActive() ([]entities.AlertRule, error)
 }
 
-// EnergyPlantRepositoryInterface define el contrato para la persistencia de plantas de energía
+// EnergyPlantRepositoryInterface defines the contract for persisting energy plants.
 //
-// CAMBIO REALIZADO: Interface agregada
-// RAZÓN: Necesitamos validar que las plantas existen antes de guardar eventos
-//
-// MÉTODOS:
-// - FindByID: Verifica si una planta existe por su UUID
-// - Exists: Método rápido para validar existencia
+// EnergyPlantRepositoryInterface validates energy plant existence during event ingestion.
+// This prevents saving events for non-existent plants, ensuring data consistency and
+// enabling the dual-write strategy to selectively update plant status records.
+// Methods:
+// - FindByID: Returns plant details by UUID for full validation
+// - Exists: Optimized check for rapid plant existence validation in hot paths
 type EnergyPlantRepositoryInterface interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*entities.EnergyPlants, error)
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
-// EventOperationalRepositoryInterface define el contrato para datos operacionales (calientes)
-// Esquema: operational.events_std
+// EventOperationalRepositoryInterface defines the contract for operational data (hot data)
+// Schema: operational.events_std
 type EventOperationalRepositoryInterface interface {
 	Create(ctx context.Context, entity *entities.EventOperational) (*entities.EventOperational, error)
 	FindAll(ctx context.Context, q PageQuery) (*Page[*entities.EventOperational], error)
@@ -71,8 +71,8 @@ type EventOperationalRepositoryInterface interface {
 	FindByEventType(ctx context.Context, eventType string, q PageQuery) (*Page[*entities.EventOperational], error)
 }
 
-// EventAnalyticalRepositoryInterface define el contrato para datos analíticos (fríos)
-// Esquema: analytical.events_ts (TimescaleDB hypertable)
+// EventAnalyticalRepositoryInterface defines the contract for analytical data (cold data)
+// Schema: analytical.events_ts (TimescaleDB hypertable)
 type EventAnalyticalRepositoryInterface interface {
 	Create(ctx context.Context, entity *entities.EventAnalytical) (*entities.EventAnalytical, error)
 	FindByTimeRange(ctx context.Context, start, end time.Time) ([]*entities.EventAnalytical, error)
@@ -80,7 +80,7 @@ type EventAnalyticalRepositoryInterface interface {
 	GetDailyAggregation(ctx context.Context, plantId uuid.UUID, start, end time.Time) ([]AggregatedEvent, error)
 }
 
-// DualEventWriterInterface define el contrato para escritura dual a ambas tablas
+// DualEventWriterInterface defines the contract for dual-writing to both tables
 type DualEventWriterInterface interface {
 	SaveEvent(ctx context.Context, op *entities.EventOperational, an *entities.EventAnalytical) error
 	SaveEventAsync(op *entities.EventOperational, an *entities.EventAnalytical) error // no ctx: non-blocking enqueue
@@ -95,7 +95,7 @@ type AggregatedEvent struct {
 	EventCount    int64     `json:"event_count"`
 }
 
-// AnalyticsWorkerRepoInterface - contrato para agregaciones del worker de analytics
+// AnalyticsWorkerRepoInterface - contract for analytics worker aggregations
 type AnalyticsWorkerRepoInterface interface {
 	RecalculateDirtyBuckets(lookbackWindow time.Duration) (int, error)
 	GetPendingWebhooks(limit int) ([]*entities.WebhookQueueItem, error)
@@ -103,13 +103,13 @@ type AnalyticsWorkerRepoInterface interface {
 	GetHourlyStats(bucket time.Time, plantId uuid.UUID) (*entities.HourlyPlantStats, error)
 }
 
-// AnalyticsCoordinatorInterface - contrato para el worker de analytics
+// AnalyticsCoordinatorInterface - contract for the analytics worker
 type AnalyticsCoordinatorInterface interface {
 	Start()
 	Stop()
 }
 
-// PlantStatusRepositoryInterface - contrato para el Digital Twin de estado de plantas
+// PlantStatusRepositoryInterface - contract for the plant status Digital Twin
 type PlantStatusRepositoryInterface interface {
 	Upsert(ctx context.Context, status *entities.PlantCurrentStatus) error
 	GetByPlantID(ctx context.Context, plantID uuid.UUID) (*entities.PlantCurrentStatus, error)

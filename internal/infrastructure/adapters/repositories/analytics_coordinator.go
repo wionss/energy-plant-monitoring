@@ -60,11 +60,11 @@ type AnalyticsCoordinator struct {
 	stopChan chan struct{}
 
 	// Metrics
-	bucketsProcessed   atomic.Int64
-	webhooksSent       atomic.Int64
-	webhooksFailed     atomic.Int64
-	locksSkipped       atomic.Int64
-	metricsStartTime   time.Time
+	bucketsProcessed atomic.Int64
+	webhooksSent     atomic.Int64
+	webhooksFailed   atomic.Int64
+	locksSkipped     atomic.Int64
+	metricsStartTime time.Time
 }
 
 var _ output.AnalyticsCoordinatorInterface = &AnalyticsCoordinator{}
